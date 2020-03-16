@@ -7,6 +7,7 @@ Projet scolaire de HPC pour résoudre un système avec matrice creuse.
 
 # Compiler & exécuter
 make
+
 ./cg --matrix fichier_matrice.mtx --solution fichier_solution.mtx
 
 avec fichier_matrice la matrice choisie mtx (ex : bcsstk13.mtx)
