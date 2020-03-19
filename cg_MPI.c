@@ -54,6 +54,8 @@
 
 #include <sys/time.h>
 
+#include <mpi.h>
+
 
 
 #include "mmio.h"
