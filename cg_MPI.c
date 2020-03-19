@@ -398,7 +398,7 @@ void extract_diagonal(const struct csr_matrix_t *A, double *d)
 
 /* Matrix-vector product (with A in CSR format) : y = Ax */
 
-void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y)
+void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y, int n)
 
 {
 
@@ -441,10 +441,11 @@ double dot(const int n, const double *x, const double *y)
 {
 
 	double sum = 0.0;
-  double FinalSum + 0.0;
+  	double FinalSum + 0.0;
 	for (int i = 0; i < n; i++)
 
 		sum += x[i] * y[i]; //calcul de la somme locale pour chaque processeurs
+	
   MPI_Allreduce( &sum,&finalSum,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
   return finalSum;
 
