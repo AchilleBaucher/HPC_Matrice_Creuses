@@ -398,7 +398,7 @@ void extract_diagonal(const struct csr_matrix_t *A, double *d)
 
 /* Matrix-vector product (with A in CSR format) : y = Ax */
 
-void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y, int n, int my_rank, int p)
+void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y, int my_rank, int np)
 
 {
 
@@ -412,13 +412,13 @@ void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y, int n, in
 
 	// On détermine les bons indices à traiter :
 
-	int i0 = my_rank * n / p ;
+	int i0 = my_rank * n / np ;
 
-	int i1 = i0 + n / p ;
+	int i1 = i0 + n / np ;
 
 	// On crée un vecteur ys sous partie du vecteur y à traiter pour le processus :
 
-	double *ys = malloc(8 * n / p * sizeof(double));
+	double *ys = malloc(8 * n / np * sizeof(double));
 
 	// On remplit le vecteur ys :
 
@@ -441,11 +441,11 @@ void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y, int n, in
 	// On rasemble ensuite toutes les valeurs de y obtenues, dans chaque processeur :
 
 	// ys : sous partie de y d'un processeur
-	// n / p : longueur de la sous partie envoyée
-	// &y[my_rank * n / p] : adresse où on doit placer la sous partie
-	// n / p : longueur de la sous partie reçue
+	// n / np : longueur de la sous partie envoyée
+	// &y[my_rank * n / np] : adresse où on doit placer la sous partie
+	// n / np : longueur de la sous partie reçue
 	
-	MPI_Allgather(ys, n / p , MPI_DOUBLE, &y[my_rank * n / p], n / p , MPI_DOUBLE, MPI_COMM_WORLD);
+	MPI_Allgather(ys, n / np , MPI_DOUBLE, &y[my_rank * n / np], n / np , MPI_DOUBLE, MPI_COMM_WORLD);
 
 }
 
@@ -457,12 +457,12 @@ void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y, int n, in
 
 /* dot product */
 
-double dot(const int n, const double *x, const double *y, int my_rank, int p)
+double dot(const int n, const double *x, const double *y, int my_rank, int np)
 
 {
 
 	double sum = 0.0;
-  	double FinalSum + 0.0;
+  	double finalSum = 0.0;
 	for (int i = 0; i < n; i++)
 
 		sum += x[i] * y[i]; //calcul de la somme locale pour chaque processeurs
@@ -477,11 +477,11 @@ double dot(const int n, const double *x, const double *y, int my_rank, int p)
 
 /* euclidean norm (a.k.a 2-norm) */
 
-double norm(const int n, const double *x)
+double norm(const int n, const double *x,int my_rank, int np)
 
 {
 
-	return sqrt(dot(n, x, x));
+	return sqrt(dot(n, x, x,my_rank, np));
 
 }
 
@@ -493,7 +493,7 @@ double norm(const int n, const double *x)
 
 /* Solve Ax == b (the solution is written in x). Scratch must be preallocated of size 6n */
 
-void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const double epsilon, double *scratch, int my_rank, int p)
+void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const double epsilon, double *scratch, int my_rank, int np)
 
 {
 
@@ -567,7 +567,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 
 
 
-	double rz = dot(n, r, z, my_rank, p);
+	double rz = dot(n, r, z, my_rank, np);
 
 	double start = wtime();
 
@@ -577,15 +577,15 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 
 	// !#! Pour l'insant, tous les processeurs font les calculs qui ne sont pas dans sp_gemv et dot :
 
-	while (norm(n, r) > epsilon) {
+	while (norm(n, r,my_rank, np) > epsilon) {
 
 		/* loop invariant : rz = dot(r, z) */
 
 		double old_rz = rz;
 
-		sp_gemv(A, p, q, my_rank, p);	/* q <-- A.p */
+		sp_gemv(A, p, q, my_rank, np);	/* q <-- A.p */
 
-		double alpha = old_rz / dot(n, p, q, my_rank, p);
+		double alpha = old_rz / dot(n, p, q, my_rank, np);
 
 		for (int i = 0; i < n; i++)	// x <-- x + alpha*p
 
@@ -599,7 +599,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 
 			z[i] = r[i] / d[i];
 
-		rz = dot(n, r, z, my_rank, p);	// restore invariant
+		rz = dot(n, r, z, my_rank, np);	// restore invariant
 
 		double beta = rz / old_rz;
 
@@ -619,7 +619,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 
 			double GFLOPs = 1e-9 * rate * (2 * nz + 12 * n);
 
-			fprintf(stderr, "\r     ---> error : %2.2e, iter : %d (%.1f it/s, %.2f GFLOPs)", norm(n, r), iter, rate, GFLOPs);
+			fprintf(stderr, "\r     ---> error : %2.2e, iter : %d (%.1f it/s, %.2f GFLOPs)", norm(n, r,my_rank, np), iter, rate, GFLOPs);
 
 			fflush(stdout);
 
@@ -667,15 +667,15 @@ struct option longopts[6] = {
 int main(int argc, char **argv)
 
 {
-	// On obtient son rang my_rank et le nombre de clusters p :
+	// On obtient son rang my_rank et le nombre de processeurs np :
 
-	int my_rank, p;
+	int my_rank, np;
 
 	MPI_Status status;
 
-	char hostname[SIZE_H_N];
+	//char hostname[SIZE_H_N]; Surement inutile
 
-	gethostname(hostname,SIZE_H_N);
+	//gethostname(hostname,SIZE_H_N); Surement inutile
 
 	// Initialisation :
 
@@ -685,7 +685,7 @@ int main(int argc, char **argv)
 
 	MPI_Comm_rank(MPI_COMM_WORLD,&my_rank);
 
-	MPI_Comm_size(MPI_COMM_WORLD,&p);
+	MPI_Comm_size(MPI_COMM_WORLD,&np);
 
 	/* Parse command-line options */
 
@@ -819,7 +819,7 @@ int main(int argc, char **argv)
 
 	// !#! On change un peu cg_solve pour y inclure my_rank et p :
 
-	cg_solve(A, b, x, THRESHOLD, scratch,my_rank, p);
+	cg_solve(A, b, x, THRESHOLD, scratch,my_rank, np);
 
 	// !#! Seul le processeur 0 devra exécuter la suite :
 
@@ -829,13 +829,13 @@ int main(int argc, char **argv)
 
 		double *y = scratch;
 
-		sp_gemv(A, x, y);	// y = Ax
+		sp_gemv(A, x, y, my_rank, np);	// y = Ax
 
 		for (int i = 0; i < n; i++)	// y = Ax - b
 
 			y[i] -= b[i];
 
-		fprintf(stderr, "[check] max error = %2.2e\n", norm(n, y));
+		fprintf(stderr, "[check] max error = %2.2e\n", norm(n, y, my_rank, np));
 
 	}
 
