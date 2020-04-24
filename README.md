@@ -13,3 +13,7 @@ make
 
 avec *fichier_matrice.mtx* la matrice choisie mtx (ex : bcsstk13.mtx)
 et *fichier_solution.mtx* le fichier dans lequel sera écrite la solution.
+
+# Ssh
+ssh NUMETU@ssh.ufr-info-p6.jussieu.fr
+ssh NUMETU@ppti-14-305-01
