@@ -6,18 +6,27 @@ Projet scolaire de HPC pour résoudre un système avec matrice creuse.
 * Les matrices son téléchargeables ici : http://hpc.fil.cool/matrix/
 * Overleaf : https://www.overleaf.com/4426958872xhrnxcxjspvb
 
+# Avant de commencer
+## Ssh
+ssh NUMETU@ssh.ufr-info-p6.jussieu.fr
+ssh NUMETU@ppti-14-305-01
+
+## Internet
+export http_proxy="proxy.ufr-info-p6.jussieu.fr:3128"
+export https_proxy="proxy.ufr-info-p6.jussieu.fr:3128"
+
 # Compiler & exécuter
 make
+
+python3 runner.py
 
 ./cg --matrix *fichier_matrice.mtx* --solution *fichier_solution.mtx*
 
 avec *fichier_matrice.mtx* la matrice choisie mtx (ex : bcsstk13.mtx)
 et *fichier_solution.mtx* le fichier dans lequel sera écrite la solution.
 
-# Ssh
-https://cbouilla.github.io//HPC.html
-ssh NUMETU@ssh.ufr-info-p6.jussieu.fr
-ssh NUMETU@ppti-14-305-01
+
+
 
 # ERREURS
  1. Json
