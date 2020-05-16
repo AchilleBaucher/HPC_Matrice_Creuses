@@ -76,7 +76,7 @@ double PRF(int i, unsigned long long seed)
 /*************************** Matrix IO ****************************************/
 
 /* Load MatrixMarket sparse symetric matrix from the file descriptor f */
-struct csr_matrix_t *load_mm(FILE * f)
+struct csr_matrix_t *load_mm(FILE * f, int my_rank)
 {
 	MM_typecode matcode;
 	int n, m, nnz;
@@ -93,8 +93,10 @@ struct csr_matrix_t *load_mm(FILE * f)
 		errx(1, "Matrix type [%s] not supported (only real symmetric are OK)", mm_typecode_to_str(matcode));
 	if (mm_read_mtx_crd_size(f, &n, &m, &nnz) != 0)
 		errx(1, "Cannot read matrix size");
-	fprintf(stderr, "[IO] Loading [%s] %d x %d with %d nz in triplet format\n", mm_typecode_to_str(matcode), n, n, nnz);
-	fprintf(stderr, "     ---> for this, I will allocate %.1f MByte\n", 1e-6 * (40.0 * nnz + 8.0 * n));
+	if(!my_rank) // !#
+		fprintf(stderr, "[IO] Loading [%s] %d x %d with %d nz in triplet format\n", mm_typecode_to_str(matcode), n, n, nnz);
+	if(!my_rank) // !#
+		fprintf(stderr, "     ---> for this, I will allocate %.1f MByte\n", 1e-6 * (40.0 * nnz + 8.0 * n));
 
 	/* Allocate memory for the COOrdinate representation of the matrix (lower-triangle only) */
 	int *Ti = malloc(nnz * sizeof(*Ti));
@@ -120,7 +122,8 @@ struct csr_matrix_t *load_mm(FILE * f)
 	}
 
 	double stop = wtime();
-	fprintf(stderr, "     ---> loaded in %.1fs\n", stop - start);
+	if(!my_rank) // !#
+		fprintf(stderr, "     ---> loaded in %.1fs\n", stop - start);
 
 	/* -------- STEP 2: Convert to CSR (compressed sparse row) representation ----- */
 	start = wtime();
@@ -179,8 +182,10 @@ struct csr_matrix_t *load_mm(FILE * f)
 	free(Tj);
 	free(Tx);
 	stop = wtime();
-	fprintf(stderr, "     ---> converted to CSR format in %.1fs\n", stop - start);
-	fprintf(stderr, "     ---> CSR matrix size = %.1fMbyte\n", 1e-6 * (24. * nnz + 4. * n));
+	if(!my_rank) // !#
+		fprintf(stderr, "     ---> converted to CSR format in %.1fs\n", stop - start);
+	if(!my_rank) // !#
+		fprintf(stderr, "     ---> CSR matrix size = %.1fMbyte\n", 1e-6 * (24. * nnz + 4. * n));
 
 	A->n = n;
 	A->nz = sum;
@@ -240,9 +245,8 @@ double dot_mpi(const int n, const double *x, const double *y, int my_rank, int n
 	double sum = 0.0;
   	double finalSum = 0.0;
 	int start = n*my_rank/np;
-	int end = n*(my_rank+1)/np;
+	int end = n*(my_rank+1)/np;		
 	for (int i = start; i < end; i++)
-
 		sum += x[i] * y[i]; //calcul de la somme locale pour chaque processeurs
 
   MPI_Allreduce( &sum,&finalSum,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
@@ -255,8 +259,12 @@ double norm(const int n, const double *x)
 	return sqrt(dot(n, x, x));
 }
 
-/*********************** conjugate gradient algorithm *************************/
+double norm_mpi(const int n, const double *x,int my_rank,int np)
+{
+	return sqrt(dot_mpi(n,x,x,my_rank,np));
+}
 
+/*********************** conjugate gradient algorithm *************************/
 /* Solve Ax == b (the solution is written in x). Scratch must be preallocated of size 6n */
 void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const double epsilon, double *scratch, int my_rank, int np)
 {
@@ -298,25 +306,40 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	for (int i = 0; i < n; i++)	// p <-- z
 		p[i] = z[i];
 
-	double rz = dot(n, r, z);
+	double rz = dot_mpi(n, r, z,my_rank,np);
 	double start = wtime();
 	double last_display = start;
 	int iter = 0;
 
+	double a1 = dot(n,p,q);
+	double a2 = dot_mpi(n,p,q,my_rank,np);
+	fprintf(stderr,"et moi %d alors\n",my_rank);
+	if(!my_rank)
+		fprintf(stderr,"Verification %d\n",a1==a2);
+	
+
 	// !#! Pour l'insant, tous les processeurs font les calculs qui ne sont pas dans sp_gemv et dot :
 	// !#! Paralléliser dot
-	while (norm(n, r) > epsilon) {
+	while (norm_mpi(n, r,my_rank,np) > epsilon) {
 		/* loop invariant : rz = dot(r, z) */
 		double old_rz = rz;
 		sp_gemv(A, p, q);	/* q <-- A.p */
-		double alpha = old_rz / dot(n, p, q);
+		double dacmpi = dot_mpi(n,p,q,my_rank,np);
+		double dac =  dot(n,p,q);
+		if((dacmpi-dac)*(dacmpi-dac)  > 1)
+		{
+			fprintf(stderr,"ERROR %d : %f - %f = %f\n",dac==dacmpi,dac,dacmpi,1/(dac-dacmpi));
+			fprintf(stderr,"start = %d et end = %d sur %d\n",n*my_rank/np,n*(my_rank+1)/np,n);
+			exit(0);
+		}
+		double alpha = old_rz / dot_mpi(n,p,q,my_rank,np);
 		for (int i = 0; i < n; i++)	// x <-- x + alpha*p
 			x[i] += alpha * p[i];
 		for (int i = 0; i < n; i++)	// r <-- r - alpha*q
 			r[i] -= alpha * q[i];
 		for (int i = 0; i < n; i++)	// z <-- M^(-1).r
 			z[i] = r[i] / d[i];
-		rz = dot(n, r, z);	// restore invariant
+		rz = dot_mpi(n, r, z,my_rank,np);	// restore invariant
 		double beta = rz / old_rz;
 		for (int i = 0; i < n; i++)	// p <-- z + beta*p
 			p[i] = z[i] + beta * p[i];
@@ -326,12 +349,14 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 			/* verbosity */
 			double rate = iter / (t - start);	// iterations per s.
 			double GFLOPs = 1e-9 * rate * (2 * nz + 12 * n);
-			fprintf(stderr, "\r     ---> error : %2.2e, iter : %d (%.1f it/s, %.2f GFLOPs)", norm(n, r), iter, rate, GFLOPs);
+			fprintf(stderr, "\r     ---> error : %2.2e, iter : %d (%.1f it/s, %.2f GFLOPs)", norm_mpi(n, r,my_rank,np), iter, rate, GFLOPs);
 			fflush(stdout);
 			last_display = t;
 		}
 	}
-	fprintf(stderr, "\n     ---> Finished in %.1fs and %d iterations\n", wtime() - start, iter);
+	if(!my_rank) // !#
+		fprintf(stderr, "\n     ---> Finished in %.1fs and %d iterations\n", wtime() - start, iter);
+
 }
 
 /******************************* main program *********************************/
@@ -363,6 +388,7 @@ int main(int argc, char **argv)
 	char *solution_filename = NULL;
 	int safety_check = 1;
 	char ch;
+
 	while ((ch = getopt_long(argc, argv, "", longopts, NULL)) != -1) {
 		switch (ch) {
 		case 's':
@@ -392,7 +418,7 @@ int main(int argc, char **argv)
 		if (f_mat == NULL)
 			err(1, "cannot matrix file %s", matrix_filename);
 	}
-	struct csr_matrix_t *A = load_mm(f_mat);
+	struct csr_matrix_t *A = load_mm(f_mat,my_rank);
 
 	/* Allocate memory */
 	int n = A->n;
@@ -408,7 +434,8 @@ int main(int argc, char **argv)
 		FILE *f_b = fopen(rhs_filename, "r");
 		if (f_b == NULL)
 			err(1, "cannot open %s", rhs_filename);
-		fprintf(stderr, "[IO] Loading b from %s\n", rhs_filename);
+		if(!my_rank) // !#
+			fprintf(stderr, "[IO] Loading b from %s\n", rhs_filename);
 		for (int i = 0; i < n; i++) {
 			if (1 != fscanf(f_b, "%lg\n", &b[i]))
 				errx(1, "parse error entry %d\n", i);
@@ -450,3 +477,4 @@ int main(int argc, char **argv)
 		fprintf(f_x, "%a\n", x[i]);
 	return EXIT_SUCCESS;
 }
+
