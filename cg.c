@@ -1,4 +1,4 @@
-/* 
+/*
  * Sequential implementation of the Conjugate Gradient Method.
  *
  * Authors : Lilia Ziane Khodja & Charles Bouillaguet
@@ -8,8 +8,8 @@
  * CHANGE LOG:
  *    v1.01 : fix a minor printing bug in load_mm (incorrect CSR matrix size)
  *    v1.02 : use https instead of http in "PRO-TIP"
- *  
- * USAGE: 
+ *
+ * USAGE:
  * 	$ ./cg --matrix bcsstk13.mtx                # loading matrix from file
  *      $ ./cg --matrix bcsstk13.mtx > /dev/null    # ignoring solution
  *	$ ./cg < bcsstk13.mtx > /dev/null           # loading matrix from stdin
@@ -21,13 +21,18 @@
  *      # downloading and uncompressing the matrix on the fly
  *	$ curl --silent https://hpc.fil.cool/matrix/bcsstk13.mtx.gz | zcat | ./cg
  */
+
+ // code
+ // !# Ajout ok
+ // !#!  Àfaire
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <err.h>
 #include <math.h>
 #include <getopt.h>
 #include <sys/time.h>
-
+#include <mpi.h>
 #include "mmio.h"
 
 #define THRESHOLD 1e-8		// maximum tolerance threshold
@@ -109,7 +114,7 @@ struct csr_matrix_t *load_mm(FILE * f)
 		/*
 		 * Uncomment this to check input (but it slows reading)
 		 * if (i < 1 || i > n || j < 1 || j > i)
-		 *	errx(2, "invalid entry %d : %d %d\n", u, i, j); 
+		 *	errx(2, "invalid entry %d : %d %d\n", u, i, j);
 		 */
 		Tx[u] = x;
 	}
@@ -230,6 +235,20 @@ double dot(const int n, const double *x, const double *y)
 	return sum;
 }
 
+double dot_mpi(const int n, const double *x, const double *y, int my_rank, int np)
+{
+	double sum = 0.0;
+  	double finalSum = 0.0;
+	int start = n*my_rank/np;
+	int end = n*(my_rank+1)/np;
+	for (int i = start; i < end; i++)
+
+		sum += x[i] * y[i]; //calcul de la somme locale pour chaque processeurs
+
+  MPI_Allreduce( &sum,&finalSum,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
+  return finalSum;
+
+}
 /* euclidean norm (a.k.a 2-norm) */
 double norm(const int n, const double *x)
 {
@@ -239,14 +258,20 @@ double norm(const int n, const double *x)
 /*********************** conjugate gradient algorithm *************************/
 
 /* Solve Ax == b (the solution is written in x). Scratch must be preallocated of size 6n */
-void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const double epsilon, double *scratch)
+void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const double epsilon, double *scratch, int my_rank, int np)
 {
 	int n = A->n;
 	int nz = A->nz;
+	// !# Seul le 0 affiche ces infos
+	if(my_rank==0)
+	{
+		fprintf(stderr, "[CG] Starting iterative solver\n");
+		fprintf(stderr, "     ---> Using : %d nodes\n",np);
+		fprintf(stderr, "     ---> Working set : %.1fMbyte\n", 1e-6 * (12.0 * nz + 52.0 * n));
+		fprintf(stderr, "     ---> Per iteration: %.2g FLOP in sp_gemv() and %.2g FLOP in the rest\n", 2. * nz, 12. * n);
+	}
 
-	fprintf(stderr, "[CG] Starting iterative solver\n");
-	fprintf(stderr, "     ---> Working set : %.1fMbyte\n", 1e-6 * (12.0 * nz + 52.0 * n));
-	fprintf(stderr, "     ---> Per iteration: %.2g FLOP in sp_gemv() and %.2g FLOP in the rest\n", 2. * nz, 12. * n);
+	// !#! Pour l'insant, tous les processeurs font les calculs initiaux et ont une copie de scratch :
 
 	double *r = scratch;	        // residue
 	double *z = scratch + n;	// preconditioned-residue
@@ -257,7 +282,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	/* Isolate diagonal */
 	extract_diagonal(A, d);
 
-	/* 
+	/*
 	 * This function follows closely the pseudo-code given in the (english)
 	 * Wikipedia page "Conjugate gradient method". This is the version with
 	 * preconditionning.
@@ -277,6 +302,9 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	double start = wtime();
 	double last_display = start;
 	int iter = 0;
+
+	// !#! Pour l'insant, tous les processeurs font les calculs qui ne sont pas dans sp_gemv et dot :
+	// !#! Paralléliser dot
 	while (norm(n, r) > epsilon) {
 		/* loop invariant : rz = dot(r, z) */
 		double old_rz = rz;
@@ -320,6 +348,14 @@ struct option longopts[6] = {
 
 int main(int argc, char **argv)
 {
+	// !# Réception des indices
+	int my_rank, np;
+	MPI_Init(&argc, &argv);
+	MPI_Comm_rank(MPI_COMM_WORLD,&my_rank);
+	MPI_Comm_size(MPI_COMM_WORLD,&np);
+
+	fprintf(stderr, "Je suis le %d sur %d\n", my_rank,np);
+
 	/* Parse command-line options */
 	long long seed = 0;
 	char *rhs_filename = NULL;
@@ -384,7 +420,14 @@ int main(int argc, char **argv)
 	}
 
 	/* solve Ax == b */
-	cg_solve(A, b, x, THRESHOLD, scratch);
+	// !# Ajout des arguments de ses indices
+	cg_solve(A, b, x, THRESHOLD, scratch,my_rank, np);
+
+	// !# Seul le processeur 0 devra exécuter la suite :
+	if(my_rank != 0)
+	{
+		return EXIT_SUCCESS;
+	}
 
 	/* Check result */
 	if (safety_check) {

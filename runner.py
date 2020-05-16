@@ -20,8 +20,7 @@ params['matrix'] = "bcsstk13"
 params['users'] = ["Achille Baucher", "Najwa Moursli"]
 
 # Description du code exécuté
-params['software'] = """Code séquentiel fourni.
-Pas d'améliorations apportées."""
+params['software'] = """Code modifié pour tests."""
 
 # Description du matériel utilisé pour l'exécution
 params['nodes'] = 4   # nombre de noeuds
