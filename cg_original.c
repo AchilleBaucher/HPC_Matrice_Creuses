@@ -1,14 +1,15 @@
-/*
+/* 
  * Sequential implementation of the Conjugate Gradient Method.
  *
  * Authors : Lilia Ziane Khodja & Charles Bouillaguet
  *
- * v1.01 (2020-03-11)
+ * v1.02 (2020-04-3)
  *
  * CHANGE LOG:
  *    v1.01 : fix a minor printing bug in load_mm (incorrect CSR matrix size)
- *
- * USAGE:
+ *    v1.02 : use https instead of http in "PRO-TIP"
+ *  
+ * USAGE: 
  * 	$ ./cg --matrix bcsstk13.mtx                # loading matrix from file
  *      $ ./cg --matrix bcsstk13.mtx > /dev/null    # ignoring solution
  *	$ ./cg < bcsstk13.mtx > /dev/null           # loading matrix from stdin
@@ -18,7 +19,7 @@
  *
  * PRO-TIP :
  *      # downloading and uncompressing the matrix on the fly
- *	$ curl --silent http://hpc.fil.cool/matrix/bcsstk13.mtx.gz | zcat | ./cg
+ *	$ curl --silent https://hpc.fil.cool/matrix/bcsstk13.mtx.gz | zcat | ./cg
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -105,6 +106,11 @@ struct csr_matrix_t *load_mm(FILE * f)
 			errx(1, "parse error entry %d\n", u);
 		Ti[u] = i - 1;	/* MatrixMarket is 1-based */
 		Tj[u] = j - 1;
+		/*
+		 * Uncomment this to check input (but it slows reading)
+		 * if (i < 1 || i > n || j < 1 || j > i)
+		 *	errx(2, "invalid entry %d : %d %d\n", u, i, j); 
+		 */
 		Tx[u] = x;
 	}
 
@@ -242,16 +248,16 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	fprintf(stderr, "     ---> Working set : %.1fMbyte\n", 1e-6 * (12.0 * nz + 52.0 * n));
 	fprintf(stderr, "     ---> Per iteration: %.2g FLOP in sp_gemv() and %.2g FLOP in the rest\n", 2. * nz, 12. * n);
 
-	double *r = scratch + n;	// residue
-	double *z = scratch + 2 * n;	// preconditioned-residue
-	double *p = scratch + 3 * n;	// search direction
-	double *q = scratch + 4 * n;	// q == Ap
-	double *d = scratch + 5 * n;	// diagonal entries of A (Jacobi preconditioning)
+	double *r = scratch;	        // residue
+	double *z = scratch + n;	// preconditioned-residue
+	double *p = scratch + 2 * n;	// search direction
+	double *q = scratch + 3 * n;	// q == Ap
+	double *d = scratch + 4 * n;	// diagonal entries of A (Jacobi preconditioning)
 
 	/* Isolate diagonal */
 	extract_diagonal(A, d);
 
-	/*
+	/* 
 	 * This function follows closely the pseudo-code given in the (english)
 	 * Wikipedia page "Conjugate gradient method". This is the version with
 	 * preconditionning.
@@ -354,7 +360,7 @@ int main(int argc, char **argv)
 
 	/* Allocate memory */
 	int n = A->n;
-	double *mem = malloc(8 * n * sizeof(double));
+	double *mem = malloc(7 * n * sizeof(double));
 	if (mem == NULL)
 		err(1, "cannot allocate dense vectors");
 	double *x = mem;	/* solution vector */
