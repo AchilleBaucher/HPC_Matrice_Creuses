@@ -461,7 +461,7 @@ double dot(const int n, const double *x, const double *y, int my_rank, int np)
 
 {
 
-	double sum = 0.0;
+	double sum = 0.0+my_rank+np;
   	double finalSum = 0.0;
 	for (int i = 0; i < n; i++)
 

@@ -9,7 +9,7 @@ all : cg
 
 cg : cg.o mmio.o
 mmio.o : mmio.c mmio.h
-cg.o : cg.c mmio.h
+cg.o : cg_original.c mmio.h
 
 .PHONY: clean
 clean :
