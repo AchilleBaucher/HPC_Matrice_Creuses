@@ -6,7 +6,6 @@ import sys
 import os
 from hashlib import sha256
 import base64
-
 #################################################################
 
 # Paramètres du système (ne pas modifier)
@@ -23,7 +22,11 @@ params['users'] = ["Achille Baucher", "Najwa Moursli"]
 params['software'] = """Code modifié pour tests."""
 
 # Description du matériel utilisé pour l'exécution
-params['nodes'] = 4   # nombre de noeuds
+try :
+	nodes = sys.argv[1]
+except :
+	nodes = 4
+params['nodes'] = nodes   # nombre de noeuds
 params['cores'] = 8   # nombre total de coeurs
 params['hardware'] = "PC de la PPTI"
 # """4 PCs de la Salle 327 (Esclangon).
@@ -35,9 +38,9 @@ params['hardware'] = "PC de la PPTI"
 #   {cores}  sera remplacé par la valeur ci-dessus.
 #   {seed}   sera remplacé par la valeur fournie par le serveur.
 #   On peut ajouter toutes les options qu'on veut, utiliser mpiexec, etc.
-command_line = "./cg --matrix {matrix}.mtx --seed {seed}"
+#command_line = "./cg --matrix {matrix}.mtx --seed {seed}"
 #command_line = "zcat matrices/{matrix}.mtx.gz | ./cg --seed {seed}"
-#command_line = "mpiexec --n {cores} --hostfile nodes.txt --display-map ./cg --matrix {matrix}.mtx --seed {seed}"
+command_line = "mpiexec --n {cores} --hostfile nodes.txt --display-map ./cg --matrix {matrix}.mtx --seed {seed}"
 #command_line = "mpiexec --n {nodes} -hostfile nodes.txt --map-by ppr:1:node ./cg --matrix {matrix}.mtx --seed {seed}"
 
 ######################### Main Program ###########################

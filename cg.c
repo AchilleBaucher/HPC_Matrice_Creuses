@@ -240,18 +240,24 @@ double dot(const int n, const double *x, const double *y)
 	return sum;
 }
 
+double absolute(double x)
+{
+	if(x >= 0.0)
+		return x;
+	return -x;
+}
 double dot_mpi(const int n, const double *x, const double *y, int my_rank, int np)
 {
 	double sum = 0.0;
   	double finalSum = 0.0;
 	int start = n*my_rank/np;
-	int end = n*(my_rank+1)/np;		
+	int end =n*(my_rank+1)/np;		
 	for (int i = start; i < end; i++)
 		sum += x[i] * y[i]; //calcul de la somme locale pour chaque processeurs
 
   MPI_Allreduce( &sum,&finalSum,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
   double vraie_somme = dot(n,x,y);
-  if(vraie_somme != finalSum){
+  if(absolute(vraie_somme - finalSum)> 0.00001){
 	
   	fprintf(stderr,"INEGALITE %d : %f - %f = %f\n",vraie_somme==finalSum,vraie_somme,finalSum,1/(vraie_somme-finalSum));
 	fprintf(stderr,"	--- De %d à %d sur %d\n",start,end,n);
@@ -452,11 +458,8 @@ int main(int argc, char **argv)
 	cg_solve(A, b, x, THRESHOLD, scratch,my_rank, np);
 
 	// !# Seul le processeur 0 devra exécuter la suite :
-	if(my_rank != 0)
+	if(my_rank == 0)
 	{
-		return EXIT_SUCCESS;
-	}
-
 	/* Check result */
 	if (safety_check) {
 		double *y = scratch;
@@ -476,6 +479,8 @@ int main(int argc, char **argv)
 	}
 	for (int i = 0; i < n; i++)
 		fprintf(f_x, "%a\n", x[i]);
+	}
+	MPI_Finalize();
 	return EXIT_SUCCESS;
 }
 
