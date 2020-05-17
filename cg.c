@@ -229,6 +229,50 @@ void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y)
 	}
 }
 
+/* Matrix-vector product (with A in CSR format) : y = Ax */
+void sp_gemv_mpi(const struct csr_matrix_t *A, const double *x, double *y, int my_rank, int np)
+{
+        int n = A->n;
+        int *Ap = A->Ap;
+        int *Aj = A->Aj;
+        double *Ax = A->Ax;
+
+	// !# Déterminer les bons indices
+	int start = my_rank*n/np;
+	int end = (my_rank+1)*n/np;
+	double *ys = malloc(8 * (end-start) * sizeof(double));
+        for (int i = start; i < end; i++) {
+                ys[i-start] = 0;
+                for (int u = Ap[i]; u < Ap[i + 1]; u++) {
+                        int j = Aj[u];
+                        double A_ij = Ax[u];
+                        ys[i-start] += A_ij * x[j];
+                }
+        }
+	
+	// !# Les tableau n'étant pas de la même taille
+	int *sizes = (int *)malloc(np*sizeof(int)); // Tailles des tableaux envoyés
+	int *starts = (int *)malloc(np*sizeof(int)); // Adresses dans le y
+	for(int i = 0 ; i < np ; i++){
+		sizes[i] = (i+1)*n/np - i*n/np;
+		starts[i] = i*n/np;
+		// fprintf(stderr,"%d : sizes = %d et starts = %d\n",i,sizes[i],starts[i]);
+	}
+	MPI_Allgatherv(ys,end-start , MPI_DOUBLE,y,sizes,starts , MPI_DOUBLE, MPI_COMM_WORLD);
+	/*
+	// Vérification que c'est bien identique :
+	double *yv = malloc(8 * n * sizeof(double));
+	sp_gemv(A,x,yv);
+	for(int i= 0; i < n; i++){
+		if(y[i] != yv[i]){
+			fprintf(stderr,"SP_GEMV_MPI%d : y[%d]=%f != yv[%d]=%f\n",my_rank,i,y[i],i,yv[i]);
+			fprintf(stderr,"	----> de %d à %d sur %d\n",start,end,n);
+			exit(0);
+		}	
+	}
+	*/
+}
+
 /*************************** Vector operations ********************************/
 
 /* dot product */
@@ -333,7 +377,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	while (norm_mpi(n, r,my_rank,np) > epsilon) {
 		/* loop invariant : rz = dot(r, z) */
 		double old_rz = rz;
-		sp_gemv(A, p, q);	/* q <-- A.p */
+		sp_gemv_mpi(A, p, q,my_rank,np);	/* q <-- A.p */
 		double alpha = old_rz / dot_mpi(n,p,q,my_rank,np);
 		for (int i = 0; i < n; i++)	// x <-- x + alpha*p
 			x[i] += alpha * p[i];
