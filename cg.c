@@ -250,6 +250,13 @@ double dot_mpi(const int n, const double *x, const double *y, int my_rank, int n
 		sum += x[i] * y[i]; //calcul de la somme locale pour chaque processeurs
 
   MPI_Allreduce( &sum,&finalSum,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
+  double vraie_somme = dot(n,x,y);
+  if(vraie_somme != finalSum){
+	
+  	fprintf(stderr,"INEGALITE %d : %f - %f = %f\n",vraie_somme==finalSum,vraie_somme,finalSum,1/(vraie_somme-finalSum));
+	fprintf(stderr,"	--- De %d à %d sur %d\n",start,end,n);
+	exit(0);
+  }
   return finalSum;
 
 }
@@ -311,27 +318,20 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	double last_display = start;
 	int iter = 0;
 
-	double a1 = dot(n,p,q);
-	double a2 = dot_mpi(n,p,q,my_rank,np);
-	fprintf(stderr,"et moi %d alors\n",my_rank);
-	if(!my_rank)
-		fprintf(stderr,"Verification %d\n",a1==a2);
-	
-
 	// !#! Pour l'insant, tous les processeurs font les calculs qui ne sont pas dans sp_gemv et dot :
 	// !#! Paralléliser dot
 	while (norm_mpi(n, r,my_rank,np) > epsilon) {
 		/* loop invariant : rz = dot(r, z) */
 		double old_rz = rz;
 		sp_gemv(A, p, q);	/* q <-- A.p */
-		double dacmpi = dot_mpi(n,p,q,my_rank,np);
-		double dac =  dot(n,p,q);
-		if((dacmpi-dac)*(dacmpi-dac)  > 1)
+		// double dacmpi = dot_mpi(n,p,q,my_rank,np);
+		// double dac =  dot(n,p,q);
+		/*if((dacmpi-dac)*(dacmpi-dac)  > 1)
 		{
 			fprintf(stderr,"ERROR %d : %f - %f = %f\n",dac==dacmpi,dac,dacmpi,1/(dac-dacmpi));
 			fprintf(stderr,"start = %d et end = %d sur %d\n",n*my_rank/np,n*(my_rank+1)/np,n);
 			exit(0);
-		}
+		}*/
 		double alpha = old_rz / dot_mpi(n,p,q,my_rank,np);
 		for (int i = 0; i < n; i++)	// x <-- x + alpha*p
 			x[i] += alpha * p[i];
@@ -373,6 +373,7 @@ struct option longopts[6] = {
 
 int main(int argc, char **argv)
 {
+	fprintf(stderr, "ENTREE\n");
 	// !# Réception des indices
 	int my_rank, np;
 	MPI_Init(&argc, &argv);
