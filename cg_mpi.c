@@ -250,7 +250,7 @@ struct csr_matrix_t *load_mm(FILE * f)
 
 	double *Ax = malloc(2 * nnz * sizeof(*Ax));
 
-	if (w == NULL || ptr == NULL || colIndex == NULL || values == NULL)
+	if (w == NULL || Ap == NULL || Aj == NULL || Ax == NULL)
 
 		err(1, "Cannot allocate (CSR) sparse matrix");
 
@@ -368,14 +368,15 @@ struct csr_matrix_t *load_mm(FILE * f)
 
 /*Répartition des vecteurs */
 
-void scattVector(double *b,double *b_local,int nrow,int n_local,int my_rank, .
-	int n_loc,Ap_count[np], Ap_moves[np];
+void scattVector(double *b,double *b_local,int nrow,int n_local,int my_rank, int np)
+{
+	int n_loc, Ap_count[np], Ap_moves[np];
 
 	if(my_rank==MASTER){
 
 		int n_loc_der; // dernier processus
 
-		n_loc = ceil((double)nrow/ np); // taille du vecteur de chaque processus 
+		n_loc = ceil((double)nrow/ np); // taille du vecteur de chaque processus
 
 		n_loc_der = nrow - (np-1)*n_loc;    //taille du dernier vecteur p .
 
@@ -389,7 +390,7 @@ void scattVector(double *b,double *b_local,int nrow,int n_local,int my_rank, .
 
 		}
 
-		// Obtenir la taille et le déplacement de chque processus 
+		// Obtenir la taille et le déplacement de chque processus
 
 		for (int p = 0; p < np-1; p++) {
 
@@ -399,7 +400,7 @@ void scattVector(double *b,double *b_local,int nrow,int n_local,int my_rank, .
 
 		}
 
-		Ap_count[n-1] = n_loc_der;
+		Ap_count[np-1] = n_loc_der;
 
 		Ap_moves[np-1] =(np-1)*n_loc;
 
@@ -429,9 +430,9 @@ void scattMatrix(const struct csr_matrix_t *A,struct csr_matrix_t *A_local,int *
 
 		*nrow=A->n;
 
-		n_local = ceil((double)*nrow/ np); 
+		n_local = ceil((double)*nrow/ np);
 
-		n_local_last = *nrow - (np-1)*n_local;    
+		n_local_der = *nrow - (np-1)*n_local;
 
 
 
@@ -483,11 +484,11 @@ void scattMatrix(const struct csr_matrix_t *A,struct csr_matrix_t *A_local,int *
 
 		//envoie Ax
 
-		MPI_Scatterv(A->Ax,Ax_count,Ax_displs,MPI_DOUBLE,MPI_IN_PLACE,0,MPI_DOUBLE,MASTER,MPI_COMM_WORLD);
+		MPI_Scatterv(A->Ax,Ax_count,Ax_moves,MPI_DOUBLE,MPI_IN_PLACE,0,MPI_DOUBLE,MASTER,MPI_COMM_WORLD);
 
 		//envoie Aj
 
-		MPI_Scatterv(A->Aj,Aj_count,Aj_moves,MPI_INT,MPI_IN_PLACE,0,MPI_INT,MASTER,MPI_COMM_WORLD);
+		MPI_Scatterv(A->Aj,Ax_count,Ax_moves,MPI_INT,MPI_IN_PLACE,0,MPI_INT,MASTER,MPI_COMM_WORLD);
 
 		nz_local=Ax_count[0];
 
@@ -609,7 +610,7 @@ void extract_diagonal(const struct csr_matrix_t *A, double *d,int my_rank)
 
 				diff=Ap[i+1]-prec;
 
-				tmp=tmp+ecart;
+				tmp=tmp+diff;
 
 				prec=Ap[i+1];
 
@@ -729,34 +730,13 @@ void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y)
 
 /* dot product */
 
-double dot(const int n, const double *x, const double *y, int my_rank, int np)
-
-
+double dot(const int n, const double *x, const double *y)
 
 {
-
-
-
 	double sum = 0.0;
-
-  double finalSum = 0.0;
-
 	for (int i = 0; i < n; i++)
-
-
-
 		sum += x[i] * y[i]; //calcul de la somme locale pour chaque processeurs
-
-
-
-  MPI_Allreduce( &sum,&finalSum,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
-
-  return finalSum;
-
-
-
-
-
+  return sum;
 }
 
 
@@ -768,9 +748,7 @@ double dot(const int n, const double *x, const double *y, int my_rank, int np)
 double norm(const int n, const double *x)
 
 {
-
 	return sqrt(dot(n, x, x));
-
 }
 
 
@@ -987,7 +965,7 @@ int main(int argc, char **argv)
 
 	 *x={0}	/* solution vector */ ,*b={0},	/* right-hand side */
 
-	*scratch=NULL;	
+	*scratch=NULL;
 
 	/* Parse command-line options */
 
@@ -995,7 +973,7 @@ int main(int argc, char **argv)
 
 	char *solution_filename;
 
-	if(rank==MASTER){
+	if(my_rank==MASTER){
 
 		long long seed = 0;
 
@@ -1157,9 +1135,10 @@ int main(int argc, char **argv)
 
 	}
 
-	/*if(my_rank==MASTER){
+	if(my_rank==MASTER)
+	{
 
-	/* Check result
+	/* Check result */ 
 
 	if (safety_check) {
 
@@ -1179,7 +1158,7 @@ int main(int argc, char **argv)
 
 	/* Dump the solution vector */
 
-	/*FILE *f_x = stdout;
+	FILE *f_x = stdout;
 
 	if (solution_filename != NULL) {
 
@@ -1197,12 +1176,13 @@ int main(int argc, char **argv)
 
 		fprintf(f_x, "%a\n", x[i]);
 
-	}*/
+	}
 
 
-
+	
 	MPI_Finalize();
 
 	return EXIT_SUCCESS;
 
 }
+
