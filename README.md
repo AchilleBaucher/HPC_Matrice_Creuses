@@ -25,8 +25,13 @@ python3 runner.py
 avec *fichier_matrice.mtx* la matrice choisie mtx (ex : bcsstk13.mtx)
 et *fichier_solution.mtx* le fichier dans lequel sera écrite la solution.
 
+## Achille
+ssh 3672146@ssh.ufr-info-p6.jussieu.fr
+ssh 3672146@ppti-14-305-01
 
+./cg --matrix bcsstk13.mtx --seed 136467246365411317
 
+mpiexec --n 4 -hostfile nodes.txt --map-by ppr:1:node ./cg --matrix bcsstk13.mtx --seed 136467246365411317
 
 # ERREURS
  1. Json
