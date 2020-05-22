@@ -399,22 +399,27 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	while (err_actuelle> epsilon) {
 		/* loop invariant : rz = dot(r, z) */
 		double old_rz = rz;
+
+		// Utiliser sp_gemv_mpi
 		sp_gemv_mpi(A, p, q,y_local,recvcounts,displs,my_rank);	/* q <-- A.p */
 		// sp_gemv(A, p, q);
+
+		// !# Utiliser dot_mpi
 		double alpha = old_rz / dot_mpi(p,q,recvcounts,displs,my_rank);
 		// double alpha = old_rz / dot_mpi(n,p,q);
 
-		// !# On distribue ces lignes
+		// !# On distribue ces lignes :
+
 		for (int i = start_pos; i < end_pos; i++)	// x <-- x + alpha*p
-		    x_local[i-start_pos] = x [i] + alpha * p[i];
-		MPI_Allgatherv(x_local,n_local , MPI_DOUBLE,x,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
+		    x_local[i-start_pos] = x_local[i-start_pos] + alpha * p[i];
+		// !# inutile de gather x maintenant car les autres ne l'utilisent pas
 
 		for (int i = start_pos; i < end_pos; i++)	// r <-- r - alpha*q
 		    r_local[i-start_pos] = r[i] - alpha * q[i];
 		MPI_Allgatherv(r_local,n_local , MPI_DOUBLE,r,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
 
 		for (int i = start_pos; i < end_pos; i++)	// z <-- M^(-1).r
-		    z_local[i-start_pos] = r[i] / d[i];
+		    z_local[i-start_pos] = r_local[i-start_pos] / d[i];
 		MPI_Allgatherv(z_local,n_local , MPI_DOUBLE,z,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
 
 		rz = dot_mpi(r,z,recvcounts,displs,my_rank);	// restore invariant
@@ -441,7 +446,8 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 			last_display = t;
 		}
 	}
-
+	// !# On rassemble x
+	MPI_Allgatherv(x_local,n_local , MPI_DOUBLE,x,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
 	// !# Seul le 0 affiche cette info
 	if(!my_rank)
 		fprintf(stderr, "\n     ---> Finished in %.1fs and %d iterations\n", wtime() - start, iter);
