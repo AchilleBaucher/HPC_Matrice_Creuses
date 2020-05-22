@@ -271,17 +271,27 @@ double absolute(double x)
 		return x;
 	return -x;
 }
-double dot_mpi(const int n, const double *x, const double *y, int my_rank, int np)
+
+// !# Version locale de dot
+double dot_local(const int n_local, const int pos_local, const double *x, const double *y)
 {
 	double sum = 0.0;
-  	double finalSum = 0.0;
-	int start = n*my_rank/np;
-	int end =n*(my_rank+1)/np;
-	for (int i = start; i < end; i++)
-		sum += x[i] * y[i]; //calcul de la somme locale pour chaque processeurs
+	for (int i = pos_local; i < pos_local + n_local; i++)
+		sum += x[i] * y[i];
+	return sum;
+}
 
+// !# Version MPI de dot
+double dot_mpi(const double *x, const double *y, int *recvcounts, int *displs,int my_rank)
+{
+	// !#! Pas obligé de passer par local, mais aller directement à la bonne position
+	const int n_local = recvcounts[my_rank];
+	const int pos_local = displs[my_rank];
+	double sum = dot_local(n_local,pos_local,x,y);
+  	double finalSum = 0.0;
 	MPI_Allreduce( &sum,&finalSum,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
 	/* !#! DOT MPI FAIT UNE ERREUR AUTOUR DE 10^9
+
 	double vraie_somme = dot(n,x,y);
   	if(absolute(vraie_somme - finalSum)> 0.00){
 		double ptetmax = absolute(vraie_somme - finalSum);
@@ -302,9 +312,9 @@ double norm(const int n, const double *x)
 	return sqrt(dot(n, x, x));
 }
 
-double norm_mpi(const int n, const double *x,int my_rank,int np)
+double norm_mpi(const double *x,int * recvcounts, int*displs, int my_rank)
 {
-	return sqrt(dot_mpi(n,x,x,my_rank,np));
+	return sqrt(dot_mpi(x,x,recvcounts,displs,my_rank));
 }
 
 /*********************** conjugate gradient algorithm *************************/
@@ -344,6 +354,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	double *r_local = malloc(n_local * sizeof(double));
 	double *z_local = malloc(n_local * sizeof(double));
 	double *y_local = malloc(n_local * sizeof(double)); // !# Pour éviter de refaire des mallocx
+	double *p_local = malloc(n_local * sizeof(double));
 
 	// !# On les affiche pour vérifier
 	fprintf(stderr,"!###  Noeud(%d) : de %d à %d : taille %d en partant de %d\n",my_rank,start_pos,end_pos,n_local,pos_local);
@@ -378,19 +389,20 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 
 	// double rz = dot(n, r, z,my_rank,np);
 	double rz = dot(n, r, z);
+	double err_actuelle = norm(n, r); // !# Erreur actuelle
 	double start = wtime();
 	double last_display = start;
 	int iter = 0;
 
 	//
 	// while (norm_mpi(n, r,my_rank,np) > epsilon) {
-	while (norm(n, r) > epsilon) {
+	while (err_actuelle> epsilon) {
 		/* loop invariant : rz = dot(r, z) */
 		double old_rz = rz;
 		sp_gemv_mpi(A, p, q,y_local,recvcounts,displs,my_rank);	/* q <-- A.p */
 		// sp_gemv(A, p, q);
-		// double alpha = old_rz / dot_mpi(n,p,q,my_rank,np);
-		double alpha = old_rz / dot(n,p,q);
+		double alpha = old_rz / dot_mpi(p,q,recvcounts,displs,my_rank);
+		// double alpha = old_rz / dot_mpi(n,p,q);
 
 		// !# On distribue ces lignes
 		for (int i = start_pos; i < end_pos; i++)	// x <-- x + alpha*p
@@ -405,15 +417,18 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 		    z_local[i-start_pos] = r[i] / d[i];
 		MPI_Allgatherv(z_local,n_local , MPI_DOUBLE,z,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
 
-		// rz = dot_mpi(n, r, z,my_rank,np);	// restore invariant
-		rz = dot(n, r, z);
+		rz = dot_mpi(r,z,recvcounts,displs,my_rank);	// restore invariant
+		// rz = dot(n, r, z);
 		double beta = rz / old_rz;
-		for (int i = 0; i < n; i++)	// p <-- z + beta*p
-			p[i] = z[i] + beta * p[i];
+
+		for (int i = start_pos; i < end_pos; i++)	// p <-- z + beta*p
+			p_local[i-start_pos] = z[i] + beta * p[i];
+		MPI_Allgatherv(p_local,n_local , MPI_DOUBLE,p,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
+
 		iter++;
 		double t = wtime();
 		// double err_actuelle = norm_mpi(n, r,my_rank,np);
-		double err_actuelle = norm(n, r);
+		err_actuelle = norm_mpi(r,recvcounts,displs,my_rank);
 
 		// !# Seul le 0 affiche ces infos
 		if (t - last_display > 0.5 && my_rank == 0) {
