@@ -389,6 +389,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 
 	// double rz = dot(n, r, z,my_rank,np);
 	double rz = dot(n, r, z);
+    double rz_local = rz;
 	double err_actuelle = norm(n, r); // !# Erreur actuelle
 	double start = wtime();
 	double last_display = start;
@@ -422,8 +423,9 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 		    z_local[i-start_pos] = r_local[i-start_pos] / d[i];
 		MPI_Allgatherv(z_local,n_local , MPI_DOUBLE,z,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
 
-		rz = dot_mpi(r,z,recvcounts,displs,my_rank);	// restore invariant
-		// rz = dot(n, r, z);
+		// rz = dot_mpi(r,z,recvcounts,displs,my_rank);	// restore invariant
+        rz_local = dot(n_local,r_local,z_local);	// restore invariant
+        MPI_Allreduce( &rz_local,&rz,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
 		double beta = rz / old_rz;
 
 		for (int i = start_pos; i < end_pos; i++)	// p <-- z + beta*p
