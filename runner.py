@@ -15,11 +15,11 @@ params['version'] = 3
 params['proof'] = 0x65dec1542f679f51
 
 # Paramètres du calcul (à adapter)
-params['matrix'] = "bcsstk13"
+params['matrix'] = "cfd1"
 params['users'] = ["Achille Baucher", "Najwa Moursli"]
 
 # Description du code exécuté
-params['software'] = """Code modifié pour tests."""
+params['software'] = """Version MPI complete"""
 
 # Description du matériel utilisé pour l'exécution
 try :
@@ -28,7 +28,7 @@ except :
 	nodes = 4
 params['nodes'] = nodes   # nombre de noeuds
 params['cores'] = 2*nodes   # nombre total de coeurs
-params['hardware'] = "PC de la PPTI"
+params['hardware'] = "PC de la PPTI, 305"
 # """4 PCs de la Salle 327 (Esclangon).
 # Machines de bureau DELL équipés de CPU Intel i3 à 2 coeurs, 3Ghz, et 4Go de RAM."""
 
