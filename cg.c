@@ -272,7 +272,7 @@ double absolute(double x)
 	return -x;
 }
 
-// !# Version locale de dot
+// !# Version locale de dot, inutile finalement
 double dot_local(const int n_local, const int pos_local, const double *x, const double *y)
 {
 	double sum = 0.0;
@@ -287,7 +287,7 @@ double dot_mpi(const double *x, const double *y, int *recvcounts, int *displs,in
 	// !#! Pas obligé de passer par local, mais aller directement à la bonne position
 	const int n_local = recvcounts[my_rank];
 	const int pos_local = displs[my_rank];
-	double sum = dot_local(n_local,pos_local,x,y);
+	double sum = dot(n_local,x + pos_local, y+ pos_local);
   	double finalSum = 0.0;
 	MPI_Allreduce( &sum,&finalSum,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
 	/* !#! DOT MPI FAIT UNE ERREUR AUTOUR DE 10^9
@@ -355,12 +355,15 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	double *z_local = malloc(n_local * sizeof(double));
 	double *y_local = malloc(n_local * sizeof(double)); // !# Pour éviter de refaire des mallocx
 	double *p_local = malloc(n_local * sizeof(double));
+	double *q_local = malloc(n_local * sizeof(double));
+	double *d_local = malloc(n_local * sizeof(double));
 
 	// !# On les affiche pour vérifier
 	fprintf(stderr,"!###  Noeud(%d) : de %d à %d : taille %d en partant de %d\n",my_rank,start_pos,end_pos,n_local,pos_local);
 	// MPI_Allgatherv(ys,end-start , MPI_DOUBLE,y,sizes,starts , MPI_DOUBLE, MPI_COMM_WORLD);
 
 	// !# Tous les processeurs font les calculs initiaux et ont dont chacun une copie du vecteur
+	// !#! beaucoup d'inutiles !!
 	double *r = scratch;	        // residue
 	double *z = scratch + n;	// preconditioned-residue
 	double *p = scratch + 2 * n;	// search direction
@@ -387,9 +390,17 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	for (int i = 0; i < n; i++)	// p <-- z
 		p[i] = z[i];
 
+	// !# On initialise ensuite les locaux qui en ont besoin
+	for (int i = start_pos; i < end_pos; i++)
+		r_local[i-start_pos] = r[i];
+	for (int i = start_pos; i < end_pos; i++)
+		p_local[i-start_pos] = p[i];
+	for (int i = start_pos; i < end_pos; i++)
+		d_local[i-start_pos] = d[i];
+
 	// double rz = dot(n, r, z,my_rank,np);
 	double rz = dot(n, r, z);
-    double rz_local = rz;
+	double rz_local = rz;
 	double err_actuelle = norm(n, r); // !# Erreur actuelle
 	double start = wtime();
 	double last_display = start;
@@ -398,41 +409,52 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	//
 	// while (norm_mpi(n, r,my_rank,np) > epsilon) {
 	while (err_actuelle> epsilon) {
+		// !#! Retirer les locaux et remplacer par adresses quand c'est possible (p?)
 		/* loop invariant : rz = dot(r, z) */
 		double old_rz = rz;
 
-		// Utiliser sp_gemv_mpi
-		sp_gemv_mpi(A, p, q,y_local,recvcounts,displs,my_rank);	/* q <-- A.p */
-		// sp_gemv(A, p, q);
+		// !# Utiliser sp_gemv_mpi
+		// sp_gemv_mpi(A, p, q,y_local,recvcounts,displs,my_rank);	/* q <-- A.p */
+		sp_gemv_local(A, p, q_local,n_local,pos_local);	/* q <-- A.p */
 
-		// !# Utiliser dot_mpi
-		double alpha = old_rz / dot_mpi(p,q,recvcounts,displs,my_rank);
-		// double alpha = old_rz / dot_mpi(n,p,q);
+		// !# On distribue le produit
+		double somme_a_locale = dot(n_local, p_local,q_local);
+		double somme_a_finale = 0.0;
+		MPI_Allreduce( &somme_a_locale,&somme_a_finale,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
+
+		// double alpha = old_rz / dot_mpi(p,q,recvcounts,displs,my_rank);
+		double alpha = old_rz / somme_a_finale;
 
 		// !# On distribue ces lignes :
 
 		for (int i = start_pos; i < end_pos; i++)	// x <-- x + alpha*p
-		    x_local[i-start_pos] = x_local[i-start_pos] + alpha * p[i];
+		    x_local[i-start_pos] = x_local[i-start_pos] + alpha * p_local[i-start_pos];
 		// !# inutile de gather x maintenant car les autres ne l'utilisent pas
 
 		for (int i = start_pos; i < end_pos; i++)	// r <-- r - alpha*q
-		    r_local[i-start_pos] = r[i] - alpha * q[i];
-		MPI_Allgatherv(r_local,n_local , MPI_DOUBLE,r,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
+		    r_local[i-start_pos] = r_local[i-start_pos] - alpha * q_local[i-start_pos];
+		// !# inutile de gather x maintenant car les autres ne l'utilisent pas
+		// MPI_Allgatherv(r_local,n_local , MPI_DOUBLE,r,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
 
 		for (int i = start_pos; i < end_pos; i++)	// z <-- M^(-1).r
-		    z_local[i-start_pos] = r_local[i-start_pos] / d[i];
-		MPI_Allgatherv(z_local,n_local , MPI_DOUBLE,z,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
+		    z_local[i-start_pos] = r_local[i-start_pos] / d_local[i-start_pos];
+		// !# inutile de gather x maintenant car les autres ne l'utilisent pas
+		// MPI_Allgatherv(z_local,n_local , MPI_DOUBLE,z,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
 
+		// !# On ditribue le produit :
 		// rz = dot_mpi(r,z,recvcounts,displs,my_rank);	// restore invariant
-        rz_local = dot(n_local,r_local,z_local);	// restore invariant
-        MPI_Allreduce( &rz_local,&rz,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
+		rz_local = dot(n_local,r_local,z_local);	// restore invariant
+		MPI_Allreduce( &rz_local,&rz,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
+
+		// rz = dot(n, r, z);
 		double beta = rz / old_rz;
 
 		for (int i = start_pos; i < end_pos; i++)	// p <-- z + beta*p
-			p_local[i-start_pos] = z[i] + beta * p[i];
+			p_local[i-start_pos] = z_local[i-start_pos] + beta * p_local[i-start_pos];
+		// !# Le p est le seul qu'on doit rassembler car on l'utilise en entier dans sp_gemv
 		MPI_Allgatherv(p_local,n_local , MPI_DOUBLE,p,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
 
-        iter++;
+		iter++;
 		double t = wtime();
 		double norm_2_local = norm(n_local, r_local);
 		double norm_2 = 0.0;
