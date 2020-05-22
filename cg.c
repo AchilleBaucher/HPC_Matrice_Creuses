@@ -432,10 +432,13 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 			p_local[i-start_pos] = z[i] + beta * p[i];
 		MPI_Allgatherv(p_local,n_local , MPI_DOUBLE,p,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
 
-		iter++;
+        iter++;
 		double t = wtime();
-		// double err_actuelle = norm_mpi(n, r,my_rank,np);
-		err_actuelle = norm_mpi(r,recvcounts,displs,my_rank);
+		double norm_2_local = norm(n_local, r_local);
+		double norm_2 = 0.0;
+		MPI_Allreduce( &norm_2_local,&norm_2,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
+		// err_actuelle = norm_mpi(r,recvcounts,displs,my_rank);
+		err_actuelle = sqrt(norm_2);
 
 		// !# Seul le 0 affiche ces infos
 		if (t - last_display > 0.5 && my_rank == 0) {
