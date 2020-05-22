@@ -397,16 +397,17 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 		z_local[i-start_pos] = z[i];
 
 
-	double rz_A = dot(n, r, z);
-	double rz;
-	double rz_local = dot(n_local,r_local,z_local);	// restore invariant
-	MPI_Allreduce( &rz_local,&rz,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
-	if(rz!=rz_A)
-		exit(0);
-	double err_2_local = norm(n_local, r_local);
-	double err_2 = 0.0;
-	MPI_Allreduce( &err_2_local,&err_2,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
-	double err_actuelle = sqrt(err_2); // !# Erreur actuelle
+	double rz = dot(n, r, z);
+	double rz_local = rz,err_2_local,err_2;
+	// double rz;
+	// double rz_local = dot(n_local,r_local,z_local);	// restore invariant
+	// MPI_Allreduce( &rz_local,&rz,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
+
+	double err_actuelle = norm(n,r);
+	// double err_2_local = norm(n_local, r_local);
+	// double err_2 = 0.0;
+	// MPI_Allreduce( &err_2_local,&err_2,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
+	// double err_actuelle = sqrt(err_2); // !# Erreur actuelle
 
 	double start = wtime();
 	double last_display = start;
