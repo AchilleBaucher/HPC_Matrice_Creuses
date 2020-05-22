@@ -229,51 +229,31 @@ void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y)
 	}
 }
 
-/* Matrix-vector product (with A in CSR format) : y = Ax */
-void sp_gemv_mpi(const struct csr_matrix_t *A, const double *x, double *y, int my_rank, int np)
+// !# Une version locale de sp_gemv_mpi
+void sp_gemv_local(const struct csr_matrix_t *A, const double *x, double *y_local, int n_local, int pos_local)
 {
-    int n = A->n;
+    // int n = A->n;
     int *Ap = A->Ap;
     int *Aj = A->Aj;
     double *Ax = A->Ax;
 
-	// !# Déterminer les bons indices
-	int start = my_rank*n/np;
-	int end = (my_rank+1)*n/np;
-
-	double *ys = malloc(8 * (end-start) * sizeof(double));
-        for (int i = start; i < end; i++) {
-                ys[i-start] = 0;
-                for (int u = Ap[i]; u < Ap[i + 1]; u++) {
-                        int j = Aj[u];
-                        double A_ij = Ax[u];
-                        ys[i-start] += A_ij * x[j];
-                }
+    for (int i = pos_local; i < pos_local + n_local; i++) {
+            y_local[i-pos_local] = 0;
+        for (int u = Ap[i]; u < Ap[i + 1]; u++) {
+                int j = Aj[u];
+                double A_ij = Ax[u];
+                y_local[i-pos_local] += A_ij * x[j];
         }
-
-	// !# Les tableau n'étant pas de la même taille
-	int *sizes = (int *)malloc(np*sizeof(int)); // Tailles des tableaux envoyés
-	int *starts = (int *)malloc(np*sizeof(int)); // Adresses dans le y
-	for(int i = 0 ; i < np ; i++){
-		sizes[i] = (i+1)*n/np - i*n/np;
-		starts[i] = i*n/np;
-		// fprintf(stderr,"%d : sizes = %d et starts = %d\n",i,sizes[i],starts[i]);
-	}
-	MPI_Allgatherv(ys,end-start , MPI_DOUBLE,y,sizes,starts , MPI_DOUBLE, MPI_COMM_WORLD);
-	/*
-	// Vérification que c'est bien identique :
-	double *yv = malloc(8 * n * sizeof(double));
-	sp_gemv(A,x,yv);
-	for(int i= 0; i < n; i++){
-		if(y[i] != yv[i]){
-			fprintf(stderr,"SP_GEMV_MPI%d : y[%d]=%f != yv[%d]=%f\n",my_rank,i,y[i],i,yv[i]);
-			fprintf(stderr,"	----> de %d à %d sur %d\n",start,end,n);
-			exit(0);
-		}
-	}
-	*/
+    }
 }
 
+void sp_gemv_mpi(const struct csr_matrix_t *A, const double *x, double *y,double*y_local, int *recvcounts, int *displs, int my_rank)
+{
+	int n_local = recvcounts[my_rank];
+	int pos_local = displs[my_rank];
+	sp_gemv_local(A,x,y_local,n_local,pos_local);
+	MPI_Allgatherv(y_local,n_local , MPI_DOUBLE,y,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
+}
 /*************************** Vector operations ********************************/
 
 /* dot product */
@@ -363,6 +343,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	double *x_local = malloc(n_local * sizeof(double));
 	double *r_local = malloc(n_local * sizeof(double));
 	double *z_local = malloc(n_local * sizeof(double));
+	double *y_local = malloc(n_local * sizeof(double)); // !# Pour éviter de refaire des mallocx
 
 	// !# On les affiche pour vérifier
 	fprintf(stderr,"!###  Noeud(%d) : de %d à %d : taille %d en partant de %d\n",my_rank,start_pos,end_pos,n_local,pos_local);
@@ -406,8 +387,8 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	while (norm(n, r) > epsilon) {
 		/* loop invariant : rz = dot(r, z) */
 		double old_rz = rz;
-		// sp_gemv_mpi(A, p, q,my_rank,np);	/* q <-- A.p */
-		sp_gemv(A, p, q);
+		sp_gemv_mpi(A, p, q,y_local,recvcounts,displs,my_rank);	/* q <-- A.p */
+		// sp_gemv(A, p, q);
 		// double alpha = old_rz / dot_mpi(n,p,q,my_rank,np);
 		double alpha = old_rz / dot(n,p,q);
 
@@ -416,8 +397,6 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 		    x_local[i-start_pos] = x [i] + alpha * p[i];
 		MPI_Allgatherv(x_local,n_local , MPI_DOUBLE,x,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
 
-		// for (int i = 0; i < n; i++)	// r <-- r - alpha*q
-		//     r[i] -= alpha * q[i];
 		for (int i = start_pos; i < end_pos; i++)	// r <-- r - alpha*q
 		    r_local[i-start_pos] = r[i] - alpha * q[i];
 		MPI_Allgatherv(r_local,n_local , MPI_DOUBLE,r,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
@@ -425,9 +404,6 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 		for (int i = start_pos; i < end_pos; i++)	// z <-- M^(-1).r
 		    z_local[i-start_pos] = r[i] / d[i];
 		MPI_Allgatherv(z_local,n_local , MPI_DOUBLE,z,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
-		// fprintf(stderr,"!###  Noeud(%d) : GATHER_V de %d à %d : taille %d en partant de %d\n",my_rank,start_pos,end_pos,n_local,pos_local);
-
-		// On rassemble les résultats
 
 		// rz = dot_mpi(n, r, z,my_rank,np);	// restore invariant
 		rz = dot(n, r, z);
