@@ -351,24 +351,20 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 
 	// !# Et les vecteurs locaux
 	double *x_local = malloc(n_local * sizeof(double));
-	double *r_local = malloc(n_local * sizeof(double));
-	double *z_local = malloc(n_local * sizeof(double));
-	double *y_local = malloc(n_local * sizeof(double)); // !# Pour éviter de refaire des mallocx
+
+	double *r_local = malloc(n_local * sizeof(double)); // residue
+	double *z_local = malloc(n_local * sizeof(double)); // preconditioned-residue
 	double *p_local = malloc(n_local * sizeof(double));
-	double *q_local = malloc(n_local * sizeof(double));
-	double *d_local = malloc(n_local * sizeof(double));
+	double *q_local = malloc(n_local * sizeof(double)); // q == Ap
 
 	// !# On les affiche pour vérifier
 	fprintf(stderr,"!###  Noeud(%d) : de %d à %d : taille %d en partant de %d\n",my_rank,start_pos,end_pos,n_local,pos_local);
 	// MPI_Allgatherv(ys,end-start , MPI_DOUBLE,y,sizes,starts , MPI_DOUBLE, MPI_COMM_WORLD);
 
 	// !# Tous les processeurs font les calculs initiaux et ont dont chacun une copie du vecteur
-	// !#! beaucoup d'inutiles !!
-	double *r = scratch;	        // residue
-	double *z = scratch + n;	// preconditioned-residue
-	double *p = scratch + 2 * n;	// search direction
-	double *q = scratch + 3 * n;	// q == Ap
-	double *d = scratch + 4 * n;	// diagonal entries of A (Jacobi preconditioning)
+
+	double *p = scratch;	// search direction
+	double *d = scratch +  n;	// diagonal entries of A (Jacobi preconditioning)
 
 	/* Isolate diagonal */
 	extract_diagonal(A, d);
@@ -381,22 +377,19 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 
 	/* We use x == 0 --- this avoids the first matrix-vector product. */
 	// Ce calcul initial n'est fait qu'une seule fois et n'a donc pas besoin d'être parrallélisé
-	for (int i = 0; i < n; i++)	// r <-- b - Ax == b
-		r[i] = b[i];
-	for (int i = 0; i < n; i++)	// z <-- M^(-1).r
-		z[i] = r[i] / d[i];
 	for (int i = 0; i < n; i++)	// p <-- z
-		p[i] = z[i];
+		p[i] = b[i]/d[i];
 
 	// !# On initialise ensuite les locaux qui en ont besoin
 	for (int i = start_pos; i < end_pos; i++)
-		r_local[i-start_pos] = r[i];
+		r_local[i-start_pos] = b[i];
 	for (int i = start_pos; i < end_pos; i++)
 		p_local[i-start_pos] = p[i];
 	for (int i = start_pos; i < end_pos; i++)
-		d_local[i-start_pos] = d[i];
+		z_local[i-start_pos] = r_local[i-start_pos]/d[i];
 	for (int i = start_pos; i < end_pos; i++)
-		z_local[i-start_pos] = z[i];
+		p_local[i-start_pos] = p[i];
+
 
 	// double rz = dot(n, r, z,my_rank,np);
 	// double rz = dot(n, r, z);
@@ -447,7 +440,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 		// MPI_Allgatherv(r_local,n_local , MPI_DOUBLE,r,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
 
 		for (int i = start_pos; i < end_pos; i++)	// z <-- M^(-1).r
-		    z_local[i-start_pos] = r_local[i-start_pos] / d_local[i-start_pos];
+		    z_local[i-start_pos] = r_local[i-start_pos] / d[i];
 		// !# inutile de gather x maintenant car les autres ne l'utilisent pas
 		// MPI_Allgatherv(z_local,n_local , MPI_DOUBLE,z,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
 
@@ -556,7 +549,8 @@ int main(int argc, char **argv)
 
 	/* Allocate memory */
 	int n = A->n;
-	double *mem = malloc(7 * n * sizeof(double));
+	// !# Plus besoin de q, r et z donc 7-3 =4
+	double *mem = malloc(4 * n * sizeof(double));
 	if (mem == NULL)
 		err(1, "cannot allocate dense vectors");
 	double *x = mem;	/* solution vector */
@@ -587,25 +581,25 @@ int main(int argc, char **argv)
 	// !# Seul le processeur 0 devra exécuter la suite :
 	if(my_rank == 0)
 	{
-	/* Check result */
-	if (safety_check) {
-		double *y = scratch;
-		sp_gemv(A, x, y);	// y = Ax
-		for (int i = 0; i < n; i++)	// y = Ax - b
-			y[i] -= b[i];
-		fprintf(stderr, "[check] max error = %2.2e\n", norm(n, y));
-	}
+		/* Check result */
+		if (safety_check) {
+			double *y = scratch;
+			sp_gemv(A, x, y);	// y = Ax
+			for (int i = 0; i < n; i++)	// y = Ax - b
+				y[i] -= b[i];
+			fprintf(stderr, "[check] max error = %2.2e\n", norm(n, y));
+		}
 
-	/* Dump the solution vector */
-	FILE *f_x = stdout;
-	if (solution_filename != NULL) {
-		f_x = fopen(solution_filename, "w");
-		if (f_x == NULL)
-			err(1, "cannot open solution file %s", solution_filename);
-		fprintf(stderr, "[IO] writing solution to %s\n", solution_filename);
-	}
-	for (int i = 0; i < n; i++)
-		fprintf(f_x, "%a\n", x[i]);
+		/* Dump the solution vector */
+		FILE *f_x = stdout;
+		if (solution_filename != NULL) {
+			f_x = fopen(solution_filename, "w");
+			if (f_x == NULL)
+				err(1, "cannot open solution file %s", solution_filename);
+			fprintf(stderr, "[IO] writing solution to %s\n", solution_filename);
+		}
+		for (int i = 0; i < n; i++)
+			fprintf(f_x, "%a\n", x[i]);
 	}
 	MPI_Finalize();
 	return EXIT_SUCCESS;
