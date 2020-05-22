@@ -397,11 +397,23 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 		p_local[i-start_pos] = p[i];
 	for (int i = start_pos; i < end_pos; i++)
 		d_local[i-start_pos] = d[i];
+	for (int i = start_pos; i < end_pos; i++)
+		z_local[i-start_pos] = z[i];
 
 	// double rz = dot(n, r, z,my_rank,np);
-	double rz = dot(n, r, z);
-	double rz_local = rz;
-	double err_actuelle = norm(n, r); // !# Erreur actuelle
+	// double rz = dot(n, r, z);
+	// double rz_local = rz;
+	double rz;
+	double rz_local = dot(n_local,r_local,z_local);	// restore invariant
+	MPI_Allreduce( &rz_local,&rz,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
+
+
+    // double err_actuelle = norm(n,r);
+	double err_2_local = norm(n_local, r_local);
+	double err_2 = 0.0;
+	MPI_Allreduce( &err_2_local,&err_2,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
+	double err_actuelle = sqrt(err_2); // !# Erreur actuelle
+
 	double start = wtime();
 	double last_display = start;
 	int iter = 0;
@@ -418,12 +430,12 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 		sp_gemv_local(A, p, q_local,n_local,pos_local);	/* q <-- A.p */
 
 		// !# On distribue le produit
-		double somme_a_locale = dot(n_local, p_local,q_local);
-		double somme_a_finale = 0.0;
-		MPI_Allreduce( &somme_a_locale,&somme_a_finale,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
+		double pq_local = dot(n_local, p_local,q_local);
+		double pq = 0.0;
+		MPI_Allreduce( &pq_local,&pq,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
 
 		// double alpha = old_rz / dot_mpi(p,q,recvcounts,displs,my_rank);
-		double alpha = old_rz / somme_a_finale;
+		double alpha = old_rz / pq;
 
 		// !# On distribue ces lignes :
 
@@ -456,11 +468,11 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 
 		iter++;
 		double t = wtime();
-		double norm_2_local = norm(n_local, r_local);
-		double norm_2 = 0.0;
-		MPI_Allreduce( &norm_2_local,&norm_2,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
+		err_2_local = norm(n_local, r_local);
+		err_2 = 0.0;
+		MPI_Allreduce( &err_2_local,&err_2,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
 		// err_actuelle = norm_mpi(r,recvcounts,displs,my_rank);
-		err_actuelle = sqrt(norm_2);
+		err_actuelle = sqrt(err_2);
 
 		// !# Seul le 0 affiche ces infos
 		if (t - last_display > 0.5 && my_rank == 0) {
