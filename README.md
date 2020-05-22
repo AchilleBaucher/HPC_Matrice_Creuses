@@ -41,4 +41,4 @@ Aborting.
 
 2. Nan
 SERVER ERROR : Le coefficient x[**88**] dans la mise en gage n'est pas le même que celui dans coeffs. Dans response : nan VS dans coeffs : nan
--> Je ne sais pas du tout
+*-> la réponse envoyée est un nan* 

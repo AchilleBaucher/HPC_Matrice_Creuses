@@ -232,14 +232,15 @@ void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y)
 /* Matrix-vector product (with A in CSR format) : y = Ax */
 void sp_gemv_mpi(const struct csr_matrix_t *A, const double *x, double *y, int my_rank, int np)
 {
-        int n = A->n;
-        int *Ap = A->Ap;
-        int *Aj = A->Aj;
-        double *Ax = A->Ax;
+    int n = A->n;
+    int *Ap = A->Ap;
+    int *Aj = A->Aj;
+    double *Ax = A->Ax;
 
 	// !# Déterminer les bons indices
 	int start = my_rank*n/np;
 	int end = (my_rank+1)*n/np;
+
 	double *ys = malloc(8 * (end-start) * sizeof(double));
         for (int i = start; i < end; i++) {
                 ys[i-start] = 0;
@@ -249,7 +250,7 @@ void sp_gemv_mpi(const struct csr_matrix_t *A, const double *x, double *y, int m
                         ys[i-start] += A_ij * x[j];
                 }
         }
-	
+
 	// !# Les tableau n'étant pas de la même taille
 	int *sizes = (int *)malloc(np*sizeof(int)); // Tailles des tableaux envoyés
 	int *starts = (int *)malloc(np*sizeof(int)); // Adresses dans le y
@@ -268,7 +269,7 @@ void sp_gemv_mpi(const struct csr_matrix_t *A, const double *x, double *y, int m
 			fprintf(stderr,"SP_GEMV_MPI%d : y[%d]=%f != yv[%d]=%f\n",my_rank,i,y[i],i,yv[i]);
 			fprintf(stderr,"	----> de %d à %d sur %d\n",start,end,n);
 			exit(0);
-		}	
+		}
 	}
 	*/
 }
@@ -295,17 +296,17 @@ double dot_mpi(const int n, const double *x, const double *y, int my_rank, int n
 	double sum = 0.0;
   	double finalSum = 0.0;
 	int start = n*my_rank/np;
-	int end =n*(my_rank+1)/np;		
+	int end =n*(my_rank+1)/np;
 	for (int i = start; i < end; i++)
 		sum += x[i] * y[i]; //calcul de la somme locale pour chaque processeurs
-	
+
 	MPI_Allreduce( &sum,&finalSum,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
 	/* !#! DOT MPI FAIT UNE ERREUR AUTOUR DE 10^9
 	double vraie_somme = dot(n,x,y);
   	if(absolute(vraie_somme - finalSum)> 0.00){
 		double ptetmax = absolute(vraie_somme - finalSum);
 		if(ptetmax > maxerrr)
-		{	
+		{
 			maxerrr = ptetmax;
 	  		fprintf(stderr,"INEGALITE %d : %f - %f = %f\n",vraie_somme==finalSum,vraie_somme,finalSum,1/(vraie_somme-finalSum));
 			fprintf(stderr,"	--- De %d à %d sur %d\n",start,end,n);
@@ -332,6 +333,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 {
 	int n = A->n;
 	int nz = A->nz;
+
 	// !# Seul le 0 affiche ces infos
 	if(my_rank==0)
 	{
@@ -341,8 +343,27 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 		fprintf(stderr, "     ---> Per iteration: %.2g FLOP in sp_gemv() and %.2g FLOP in the rest\n", 2. * nz, 12. * n);
 	}
 
-	// !#! Pour l'insant, tous les processeurs font les calculs initiaux et ont une copie de scratch :
+	// !# Déterminer les bons indices du processeur courant
+	int start = my_rank*n/np;
+	int end = (my_rank+1)*n/np;
 
+	// !# On en déduit les tableaux nécessaires aux gatherv
+	int *recvcounts = (int *)malloc(np*sizeof(int)); // Tailles des vecteurs de chaque noeud
+	int *displs = (int *)malloc(np*sizeof(int)); // Positions des vecteurs de chaque noeud
+	for(int i = 0 ; i < np ; i++){
+		recvcounts[i] = (i+1)*n/np - i*n/np;
+		starts[i] = i*n/np;
+	}
+
+	// !# Et les indices locaux correspondants
+	int n_local = recvcounts[my_rank];
+	int pos_local = displs[my_rank];
+
+	// !# On les affiche pour vérifier
+	fprintf(stderr,"Noeud(%d) : de %d à %d donc %d en partant de %d\n",my_rank,start,end,n_local,pos_local);
+	// MPI_Allgatherv(ys,end-start , MPI_DOUBLE,y,sizes,starts , MPI_DOUBLE, MPI_COMM_WORLD);
+
+	// !# Tous les processeurs font les calculs initiaux et ont dont chacun une copie du vecteur
 	double *r = scratch;	        // residue
 	double *z = scratch + n;	// preconditioned-residue
 	double *p = scratch + 2 * n;	// search direction
@@ -359,6 +380,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	 */
 
 	/* We use x == 0 --- this avoids the first matrix-vector product. */
+	// Ce calcul initial n'est fait qu'une seule fois et n'a donc pas besoin d'être parrallélisé
 	for (int i = 0; i < n; i++)
 		x[i] = 0.0;
 	for (int i = 0; i < n; i++)	// r <-- b - Ax == b
@@ -368,39 +390,51 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	for (int i = 0; i < n; i++)	// p <-- z
 		p[i] = z[i];
 
-	double rz = dot_mpi(n, r, z,my_rank,np);
+	// double rz = dot(n, r, z,my_rank,np);
+	double rz = dot(n, r, z);
 	double start = wtime();
 	double last_display = start;
 	int iter = 0;
 
-	// !#! Pour l'insant, tous les processeurs font les calculs qui ne sont pas dans sp_gemv et dot :
-	while (norm_mpi(n, r,my_rank,np) > epsilon) {
+	//
+	// while (norm_mpi(n, r,my_rank,np) > epsilon) {
+	while (norm(n, r) > epsilon) {
 		/* loop invariant : rz = dot(r, z) */
 		double old_rz = rz;
-		sp_gemv_mpi(A, p, q,my_rank,np);	/* q <-- A.p */
-		double alpha = old_rz / dot_mpi(n,p,q,my_rank,np);
+		sp_gemv(A, p, q);
+		// sp_gemv_mpi(A, p, q,my_rank,np);	/* q <-- A.p */
+		double alpha = old_rz / dot(n,p,q);
+		// double alpha = old_rz / dot_mpi(n,p,q,my_rank,np);
 		for (int i = 0; i < n; i++)	// x <-- x + alpha*p
 			x[i] += alpha * p[i];
 		for (int i = 0; i < n; i++)	// r <-- r - alpha*q
 			r[i] -= alpha * q[i];
 		for (int i = 0; i < n; i++)	// z <-- M^(-1).r
 			z[i] = r[i] / d[i];
-		rz = dot_mpi(n, r, z,my_rank,np);	// restore invariant
+		rz = dot(n, r, z);
+		// rz = dot_mpi(n, r, z,my_rank,np);	// restore invariant
 		double beta = rz / old_rz;
 		for (int i = 0; i < n; i++)	// p <-- z + beta*p
 			p[i] = z[i] + beta * p[i];
 		iter++;
 		double t = wtime();
-		if (t - last_display > 0.5) {
+		// double err_actuelle = norm_mpi(n, r,my_rank,np);
+		double err_actuelle = norm(n, r);
+
+		// !# Seul le 0 affiche ces infos
+		if (t - last_display > 0.5 and my_rank == 0) {
 			/* verbosity */
 			double rate = iter / (t - start);	// iterations per s.
 			double GFLOPs = 1e-9 * rate * (2 * nz + 12 * n);
-			fprintf(stderr, "\r     ---> error : %2.2e, iter : %d (%.1f it/s, %.2f GFLOPs)", norm_mpi(n, r,my_rank,np), iter, rate, GFLOPs);
+			// fprintf(stderr, "\r     ---> error : %2.2e, iter : %d (%.1f it/s, %.2f GFLOPs)", err_actuelle , iter, rate, GFLOPs);
+			fprintf(stderr, "\r     ---> error : %2.2e, iter : %d (%.1f it/s, %.2f GFLOPs)", err_actuelle, iter, rate, GFLOPs);
 			fflush(stdout);
 			last_display = t;
 		}
 	}
-	if(!my_rank) // !#
+
+	// !# Seul le 0 affiche cette info
+	if(!my_rank)
 		fprintf(stderr, "\n     ---> Finished in %.1fs and %d iterations\n", wtime() - start, iter);
 
 }
@@ -524,4 +558,3 @@ int main(int argc, char **argv)
 	MPI_Finalize();
 	return EXIT_SUCCESS;
 }
-
