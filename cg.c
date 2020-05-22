@@ -381,6 +381,8 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 
 	/* We use x == 0 --- this avoids the first matrix-vector product. */
 	// Ce calcul initial n'est fait qu'une seule fois et n'a donc pas besoin d'être parrallélisé
+	for (int i = 0; i < n; i++)	// r <-- b - Ax == b
+		r[i] = b[i];
 	for (int i = 0; i < n; i++)	// z <-- M^(-1).r
 		z[i] = r[i] / d[i];
 	for (int i = 0; i < n; i++)	// p <-- z
@@ -388,7 +390,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 
 	// !# On initialise ensuite les locaux qui en ont besoin
 	for (int i = start_pos; i < end_pos; i++)
-		r_local[i-start_pos] = b[i];
+		r_local[i-start_pos] = r[i];
 	for (int i = start_pos; i < end_pos; i++)
 		p_local[i-start_pos] = p[i];
 	for (int i = start_pos; i < end_pos; i++)
@@ -396,18 +398,19 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	for (int i = start_pos; i < end_pos; i++)
 		z_local[i-start_pos] = z[i];
 
+	// double rz = dot(n, r, z,my_rank,np);
+	// double rz = dot(n, r, z);
+	// double rz_local = rz;
+	double rz;
+	double rz_local = dot(n_local,r_local,z_local);	// restore invariant
+	MPI_Allreduce( &rz_local,&rz,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
 
-	double rz = dot(n, r, z);
-	double rz_local = rz,err_2_local,err_2;
-	// double rz;
-	// double rz_local = dot(n_local,r_local,z_local);	// restore invariant
-	// MPI_Allreduce( &rz_local,&rz,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
 
-	double err_actuelle = norm(n,r);
-	// double err_2_local = norm(n_local, r_local);
-	// double err_2 = 0.0;
-	// MPI_Allreduce( &err_2_local,&err_2,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
-	// double err_actuelle = sqrt(err_2); // !# Erreur actuelle
+    // double err_actuelle = norm(n,r);
+	double err_2_local = norm(n_local, r_local);
+	double err_2 = 0.0;
+	MPI_Allreduce( &err_2_local,&err_2,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
+	double err_actuelle = sqrt(err_2); // !# Erreur actuelle
 
 	double start = wtime();
 	double last_display = start;
@@ -425,12 +428,12 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 		sp_gemv_local(A, p, q_local,n_local,pos_local);	/* q <-- A.p */
 
 		// !# On distribue le produit
-		double somme_pq_locale = dot(n_local, p_local,q_local);
-		double somme_pq = 0.0;
-		MPI_Allreduce( &somme_pq_locale,&somme_pq,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
+		double pq_local = dot(n_local, p_local,q_local);
+		double pq = 0.0;
+		MPI_Allreduce( &pq_local,&pq,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD); //faire réduction de cette somme pour tous les processeurs
 
 		// double alpha = old_rz / dot_mpi(p,q,recvcounts,displs,my_rank);
-		double alpha = old_rz / somme_pq;
+		double alpha = old_rz / pq;
 
 		// !# On distribue ces lignes :
 
