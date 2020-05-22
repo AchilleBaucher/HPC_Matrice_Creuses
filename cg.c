@@ -348,8 +348,8 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	int end_pos = (my_rank+1)*n/np;
 
 	// !# On en déduit les tableaux nécessaires aux gatherv
-	int *recvcounts = (int *)malloc(np*sizeof(int)); // Tailles des vecteurs de chaque noeud
-	int *displs = (int *)malloc(np*sizeof(int)); // Positions des vecteurs de chaque noeud
+	int *recvcounts = malloc(np*sizeof(int)); // Tailles des vecteurs de chaque noeud
+	int *displs = malloc(np*sizeof(int)); // Positions des vecteurs de chaque noeud
 	for(int i = 0 ; i < np ; i++){
 		recvcounts[i] = (i+1)*n/np - i*n/np;
 		displs[i] = i*n/np;
@@ -358,6 +358,11 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	// !# Et les indices locaux correspondants
 	int n_local = recvcounts[my_rank];
 	int pos_local = displs[my_rank];
+
+	// !# Et les vecteurs locaux
+	double *x_local = malloc(n_local * sizeof(double));
+	double *r_local = malloc(n_local * sizeof(double));
+	double *z_local = malloc(n_local * sizeof(double));
 
 	// !# On les affiche pour vérifier
 	fprintf(stderr,"!###  Noeud(%d) : de %d à %d : taille %d en partant de %d\n",my_rank,start_pos,end_pos,n_local,pos_local);
@@ -401,18 +406,31 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	while (norm(n, r) > epsilon) {
 		/* loop invariant : rz = dot(r, z) */
 		double old_rz = rz;
-		sp_gemv(A, p, q);
 		// sp_gemv_mpi(A, p, q,my_rank,np);	/* q <-- A.p */
-		double alpha = old_rz / dot(n,p,q);
+		sp_gemv(A, p, q);
 		// double alpha = old_rz / dot_mpi(n,p,q,my_rank,np);
-		for (int i = 0; i < n; i++)	// x <-- x + alpha*p
-			x[i] += alpha * p[i];
-		for (int i = 0; i < n; i++)	// r <-- r - alpha*q
-			r[i] -= alpha * q[i];
-		for (int i = 0; i < n; i++)	// z <-- M^(-1).r
-			z[i] = r[i] / d[i];
-		rz = dot(n, r, z);
+		double alpha = old_rz / dot(n,p,q);
+
+		// !# On distribue ces lignes
+		for (int i = start_pos; i < end_pos; i++)	// x <-- x + alpha*p
+		    x_local[i-start_pos] = x [i] + alpha * p[i];
+		MPI_Allgatherv(x_local,n_local , MPI_DOUBLE,x,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
+
+		// for (int i = 0; i < n; i++)	// r <-- r - alpha*q
+		//     r[i] -= alpha * q[i];
+		for (int i = start_pos; i < end_pos; i++)	// r <-- r - alpha*q
+		    r_local[i-start_pos] = r[i] - alpha * q[i];
+		MPI_Allgatherv(r_local,n_local , MPI_DOUBLE,r,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
+
+		for (int i = start_pos; i < end_pos; i++)	// z <-- M^(-1).r
+		    z_local[i-start_pos] = r[i] / d[i];
+		MPI_Allgatherv(z_local,n_local , MPI_DOUBLE,z,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
+		// fprintf(stderr,"!###  Noeud(%d) : GATHER_V de %d à %d : taille %d en partant de %d\n",my_rank,start_pos,end_pos,n_local,pos_local);
+
+		// On rassemble les résultats
+
 		// rz = dot_mpi(n, r, z,my_rank,np);	// restore invariant
+		rz = dot(n, r, z);
 		double beta = rz / old_rz;
 		for (int i = 0; i < n; i++)	// p <-- z + beta*p
 			p[i] = z[i] + beta * p[i];
