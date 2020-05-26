@@ -20,9 +20,6 @@
  *                    *      # downloading and uncompressing the matrix on the fly
  *                     *	$ curl --silent http://hpc.fil.cool/matrix/bcsstk13.mtx.gz | zcat | ./cg
  *                      */
-#ifdef _OPENMP
-#include <omp.h>
-#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -223,7 +220,6 @@ void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y)
 double dot(const int n, const double *x, const double *y)
 {
 		double sum = 0.0;
-			#pragma omp parallel for reduction(+:sum)
 			for (int i = 0; i < n; i++)
 						sum += x[i] * y[i];
 				return sum;
@@ -281,18 +277,14 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 																								double old_rz = rz;
 																										sp_gemv(A, p, q);	/* q <-- A.p */
 																												double alpha = old_rz / dot(n, p, q);
-																														#pragma omp parallel for
 																														for (int i = 0; i < n; i++)	// x <-- x + alpha*p
 																																		x[i] += alpha * p[i];
-																																#pragma omp parallel for
 																																for (int i = 0; i < n; i++)	// r <-- r - alpha*q
 																																				r[i] -= alpha * q[i];
-																																		#pragma omp parallel for
 																																		for (int i = 0; i < n; i++)	// z <-- M^(-1).r
 																																						z[i] = r[i] / d[i];
 																																				rz = dot(n, r, z);	// restore invariant
 																																						double beta = rz / old_rz;
-																																								#pragma omp parallel for
 																																								for (int i = 0; i < n; i++)	// p <-- z + beta*p
 																																												p[i] = z[i] + beta * p[i];
 																																										iter++;
@@ -410,5 +402,4 @@ int main(int argc, char **argv)
 																										fprintf(f_x, "%a\n", x[i]);
 																								return EXIT_SUCCESS;
 }
-
 
