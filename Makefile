@@ -3,7 +3,7 @@ CC = mpicc
 
 # Add your choice of flags
 CFLAGS = -O3 -Wall -Wextra -g -fopenmp
-LDLIBS = -lm
+LDLIBS = -lm -fopenmp
 
 all : cg
 
