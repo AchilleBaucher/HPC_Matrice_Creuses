@@ -37,6 +37,8 @@
 
 #define THRESHOLD 1e-8		// maximum tolerance threshold
 double maxerrr;
+int it_dot;
+long int it_spgemv;
 struct csr_matrix_t {
 	int n;			// dimension
 	int nz;			// number of non-zero entries
@@ -243,18 +245,19 @@ void sp_gemv_local(const struct csr_matrix_t *A, const double *x, double *y_loca
                 int j = Aj[u];
                 double A_ij = Ax[u];
                 y_local[i-pos_local] += A_ij * x[j];
+				it_spgemv++;
         }
     }
 }
 
-// !# Version MPI de sp_gemv
-void sp_gemv_mpi(const struct csr_matrix_t *A, const double *x, double *y,double*y_local, int *recvcounts, int *displs, int my_rank)
-{
-	int n_local = recvcounts[my_rank];
-	int pos_local = displs[my_rank];
-	sp_gemv_local(A,x,y_local,n_local,pos_local);
-	MPI_Allgatherv(y_local,n_local , MPI_DOUBLE,y,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
-}
+// // !#! Version MPI de sp_gemv (obsolette)
+// void sp_gemv_mpi(const struct csr_matrix_t *A, const double *x, double *y,double*y_local, int *recvcounts, int *displs, int my_rank)
+// {
+// 	int n_local = recvcounts[my_rank];
+// 	int pos_local = displs[my_rank];
+// 	sp_gemv_local(A,x,y_local,n_local,pos_local);
+// 	MPI_Allgatherv(y_local,n_local , MPI_DOUBLE,y,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
+// }
 /*************************** Vector operations ********************************/
 
 /* dot product */
@@ -262,7 +265,10 @@ double dot(const int n, const double *x, const double *y)
 {
 	double sum = 0.0;
 	for (int i = 0; i < n; i++)
+	{
 		sum += x[i] * y[i];
+		it_dot++;
+	}
 	return sum;
 }
 
@@ -287,6 +293,9 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 		fprintf(stderr, "     ---> Working set : %.1fMbyte\n", 1e-6 * (12.0 * nz + 52.0 * n));
 		fprintf(stderr, "     ---> Per iteration: %.2g FLOP in sp_gemv() and %.2g FLOP in the rest\n", 2. * nz, 12. * n);
 	}
+
+	// !# Statistiques
+	int it_while = 0, it_boucles = 0;
 
 	// !# On calcule les indices pour tout le monde
 	int *recvcounts = malloc(np*sizeof(int)); // Tailles des vecteurs de chaque noeud
@@ -356,8 +365,10 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	double last_display = start;
 	int iter = 0;
 
-
+	
+	// while(1){
 	while (err_actuelle> epsilon) {
+		it_while++;
 		/* loop invariant : rz = dot(r, z) */
 		double old_rz = rz;
 
@@ -373,16 +384,25 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 
 		// !# On distribue les calculs élémentaires :
 
-		for (int i = start_pos; i < end_pos; i++)	// x <-- x + alpha*p
-		    x_local[i-start_pos] = x_local[i-start_pos] + alpha * p_local[i-start_pos];
+		for (int i = start_pos; i < end_pos; i++)
+		{
+			x_local[i-start_pos] = x_local[i-start_pos] + alpha * p_local[i-start_pos];
+			it_boucles++;
+		}		// x <-- x + alpha*p
 		// !# inutile de gather x maintenant car les autres ne l'utilisent pas
 
 		for (int i = start_pos; i < end_pos; i++)	// r <-- r - alpha*q
-		    r_local[i-start_pos] = r_local[i-start_pos] - alpha * q_local[i-start_pos];
+		{
+			r_local[i-start_pos] = r_local[i-start_pos] - alpha * q_local[i-start_pos];
+			it_boucles++;
+		}
 		// !# inutile de gather r maintenant car les autres ne l'utilisent pas
 
 		for (int i = start_pos; i < end_pos; i++)	// z <-- M^(-1).r
-		    z_local[i-start_pos] = r_local[i-start_pos] / d[i];
+		 {
+			 z_local[i-start_pos] = r_local[i-start_pos] / d[i];
+			 it_boucles++;
+		 }
 		// !# inutile de gather z maintenant car les autres ne l'utilisent pas
 
 		// !# On ditribue le produit pour rz:
@@ -392,10 +412,14 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 		double beta = rz / old_rz;
 
 		// !# On distribue ces calculs élémentaires :
-		for (int i = start_pos; i < end_pos; i++)	// p <-- z + beta*p
+		for (int i = start_pos; i < end_pos; i++)
+		{
 			p_local[i-start_pos] = z_local[i-start_pos] + beta * p_local[i-start_pos];
+			it_boucles++;
+		}	// p <-- z + beta*p
 
 		// !# Le p est le seul qu'on doit rassembler car on l'utilise en entier dans sp_gemv
+		// if(it_while < 8)
 		MPI_Allgatherv(p_local,n_local , MPI_DOUBLE,p,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
 
 		iter++;
@@ -423,7 +447,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	// !# Seul le 0 affiche cette info
 	if(!my_rank)
 		fprintf(stderr, "\n     ---> Finished in %.1fs and %d iterations\n", wtime() - start, iter);
-
+	fprintf(stderr, "!### Noeud(%d) : it_while : %d , it_boucles : %d , it_dot : %d , it_spgemv : %ld\n", my_rank, it_while,it_boucles,it_dot,it_spgemv);
 }
 
 /******************************* main program *********************************/
@@ -447,6 +471,10 @@ int main(int argc, char **argv)
 	MPI_Init(&argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD,&my_rank);
 	MPI_Comm_size(MPI_COMM_WORLD,&np);
+
+	// !# Initialisation des compteurs
+	it_dot =0,
+	it_spgemv = 0;
 
 	fprintf(stderr, "Je suis le %d sur %d\n", my_rank,np);
 
