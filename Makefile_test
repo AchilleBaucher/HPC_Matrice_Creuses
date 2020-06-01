@@ -1,0 +1,49 @@
+# Definition of the compiler option, libraries and the target
+
+FLAGS = -O3 -qopt-report -Wall -fopenmp -pg -Wextra
+
+
+
+# Creation of the executable file
+
+SRCS =   cg.c mmio.c cg_fusion.c cg_omp.c
+
+OBJS = $(subst .c,.o,$(SRCS))
+
+all: 
+	make cg
+	make cg_fusion
+	make cg_omp
+
+
+
+# Creation of the object file -o
+
+cg: $(OBJS)  
+
+	mpiicc ${FLAGS} -o cg $(OBJS)
+
+cg_fusion: $(OBJS)  
+
+	mpiicc ${FLAGS} -o cg_fusion $(OBJS)
+
+cg_omp: $(OBJS)  
+
+	mpiicc ${FLAGS} -o cg_omp $(OBJS)
+
+	
+
+
+%.o: %.c 
+
+	mpiicc $(FLAGS) -c $<
+
+
+
+# Clean
+
+clean:
+
+	rm *.o ./cg
+	rm *.o ./cg_fusion
+	rm *.o ./cg_omp
