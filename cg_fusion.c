@@ -26,6 +26,10 @@
  // !# Ce qu'on a modifié/ajouté
  // !#!  Àmodifier
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <err.h>
@@ -35,6 +39,7 @@
 #include <mpi.h>
 #include "mmio.h"
 
+#define MASTER 0
 #define THRESHOLD 1e-8		// maximum tolerance threshold
 double maxerrr;
 struct csr_matrix_t {
@@ -219,6 +224,7 @@ void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y)
 	int *Ap = A->Ap;
 	int *Aj = A->Aj;
 	double *Ax = A->Ax;
+	#pragma omp parallel for
 	for (int i = 0; i < n; i++) {
 		y[i] = 0;
 		for (int u = Ap[i]; u < Ap[i + 1]; u++) {
@@ -237,6 +243,7 @@ void sp_gemv_local(const struct csr_matrix_t *A, const double *x, double *y_loca
     double *Ax = A->Ax;
 
 	// !# On va de pos_local à pos_local + n_local plutôt que de traiter tous les indices
+    #pragma omp parallel for
     for (int i = pos_local; i < pos_local + n_local; i++) {
             y_local[i-pos_local] = 0;
         for (int u = Ap[i]; u < Ap[i + 1]; u++) {
@@ -253,6 +260,7 @@ void sp_gemv_local(const struct csr_matrix_t *A, const double *x, double *y_loca
 double dot(const int n, const double *x, const double *y)
 {
 	double sum = 0.0;
+	#pragma omp parallel for reduction(+:sum)
 	for (int i = 0; i < n; i++)
 		sum += x[i] * y[i];
 	return sum;
@@ -364,15 +372,18 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 		double alpha = old_rz / pq;
 
 		// !# On distribue les calculs élémentaires :
-
+		
+		#pragma omp parallel for
 		for (int i = start_pos; i < end_pos; i++)	// x <-- x + alpha*p
 		    x_local[i-start_pos] = x_local[i-start_pos] + alpha * p_local[i-start_pos];
 		// !# inutile de gather x maintenant car les autres ne l'utilisent pas
-
+		
+		#pragma omp parallel for
 		for (int i = start_pos; i < end_pos; i++)	// r <-- r - alpha*q
 		    r_local[i-start_pos] = r_local[i-start_pos] - alpha * q_local[i-start_pos];
 		// !# inutile de gather r maintenant car les autres ne l'utilisent pas
-
+		
+		#pragma omp parallel for
 		for (int i = start_pos; i < end_pos; i++)	// z <-- M^(-1).r
 		    z_local[i-start_pos] = r_local[i-start_pos] / d[i];
 		// !# inutile de gather z maintenant car les autres ne l'utilisent pas
@@ -384,6 +395,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 		double beta = rz / old_rz;
 
 		// !# On distribue ces calculs élémentaires :
+		#pragma omp parallel for
 		for (int i = start_pos; i < end_pos; i++)	// p <-- z + beta*p
 			p_local[i-start_pos] = z_local[i-start_pos] + beta * p_local[i-start_pos];
 
