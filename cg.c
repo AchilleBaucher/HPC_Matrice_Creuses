@@ -23,8 +23,8 @@
  */
 
  // code
- // !# Ajout ok
- // !#!  Àfaire
+ // !# Ce qu'on a modifié/ajouté
+ // !#!  Àmodifier
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -93,9 +93,9 @@ struct csr_matrix_t *load_mm(FILE * f, int my_rank)
 		errx(1, "Matrix type [%s] not supported (only real symmetric are OK)", mm_typecode_to_str(matcode));
 	if (mm_read_mtx_crd_size(f, &n, &m, &nnz) != 0)
 		errx(1, "Cannot read matrix size");
-	if(!my_rank) // !#
+	if(my_rank==MASTER) // !#
 		fprintf(stderr, "[IO] Loading [%s] %d x %d with %d nz in triplet format\n", mm_typecode_to_str(matcode), n, n, nnz);
-	if(!my_rank) // !#
+	if(my_rank==MASTER) // !#
 		fprintf(stderr, "     ---> for this, I will allocate %.1f MByte\n", 1e-6 * (40.0 * nnz + 8.0 * n));
 
 	/* Allocate memory for the COOrdinate representation of the matrix (lower-triangle only) */
@@ -122,7 +122,7 @@ struct csr_matrix_t *load_mm(FILE * f, int my_rank)
 	}
 
 	double stop = wtime();
-	if(!my_rank) // !#
+	if(my_rank==MASTER) // !#
 		fprintf(stderr, "     ---> loaded in %.1fs\n", stop - start);
 
 	/* -------- STEP 2: Convert to CSR (compressed sparse row) representation ----- */
@@ -182,9 +182,9 @@ struct csr_matrix_t *load_mm(FILE * f, int my_rank)
 	free(Tj);
 	free(Tx);
 	stop = wtime();
-	if(!my_rank) // !#
+	if(my_rank==MASTER) // !#
 		fprintf(stderr, "     ---> converted to CSR format in %.1fs\n", stop - start);
-	if(!my_rank) // !#
+	if(my_rank==MASTER) // !#
 		fprintf(stderr, "     ---> CSR matrix size = %.1fMbyte\n", 1e-6 * (24. * nnz + 4. * n));
 
 	A->n = n;
@@ -232,11 +232,11 @@ void sp_gemv(const struct csr_matrix_t *A, const double *x, double *y)
 // !# Une version locale de sp_gemv, utile pour mpi
 void sp_gemv_local(const struct csr_matrix_t *A, const double *x, double *y_local, int n_local, int pos_local)
 {
-    // int n = A->n;
     int *Ap = A->Ap;
     int *Aj = A->Aj;
     double *Ax = A->Ax;
 
+	// !# On va de pos_local à pos_local + n_local plutôt que de traiter tous les indices
     for (int i = pos_local; i < pos_local + n_local; i++) {
             y_local[i-pos_local] = 0;
         for (int u = Ap[i]; u < Ap[i + 1]; u++) {
@@ -247,14 +247,6 @@ void sp_gemv_local(const struct csr_matrix_t *A, const double *x, double *y_loca
     }
 }
 
-// !# Version MPI de sp_gemv
-void sp_gemv_mpi(const struct csr_matrix_t *A, const double *x, double *y,double*y_local, int *recvcounts, int *displs, int my_rank)
-{
-	int n_local = recvcounts[my_rank];
-	int pos_local = displs[my_rank];
-	sp_gemv_local(A,x,y_local,n_local,pos_local);
-	MPI_Allgatherv(y_local,n_local , MPI_DOUBLE,y,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
-}
 /*************************** Vector operations ********************************/
 
 /* dot product */
@@ -280,7 +272,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	int nz = A->nz;
 
 	// !# Seul le MASTER = 0 affiche ces infos
-	if(my_rank==0)
+	if(my_rank==MASTER)
 	{
 		fprintf(stderr, "[CG] Starting iterative solver\n");
 		fprintf(stderr, "     ---> Using : %d nodes\n",np);
@@ -408,7 +400,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 		err_actuelle = sqrt(err_2);
 
 		// !# Seul le 0 affiche ces infos
-		if (t - last_display > 0.5 && my_rank == 0) {
+		if (t - last_display > 0.5 && my_rank==MASTER) {
 			/* verbosity */
 			double rate = iter / (t - start);	// iterations per s.
 			double GFLOPs = 1e-9 * rate * (2 * nz + 12 * n);
@@ -421,7 +413,7 @@ void cg_solve(const struct csr_matrix_t *A, const double *b, double *x, const do
 	// !# On rassemble x maintenant que tout est calculé
 	MPI_Allgatherv(x_local,n_local , MPI_DOUBLE,x,recvcounts,displs , MPI_DOUBLE, MPI_COMM_WORLD);
 	// !# Seul le 0 affiche cette info
-	if(!my_rank)
+	if(my_rank==MASTER)
 		fprintf(stderr, "\n     ---> Finished in %.1fs and %d iterations\n", wtime() - start, iter);
 
 }
@@ -504,7 +496,7 @@ int main(int argc, char **argv)
 		FILE *f_b = fopen(rhs_filename, "r");
 		if (f_b == NULL)
 			err(1, "cannot open %s", rhs_filename);
-		if(!my_rank) // !#
+		if(my_rank==MASTER) // !#
 			fprintf(stderr, "[IO] Loading b from %s\n", rhs_filename);
 		for (int i = 0; i < n; i++) {
 			if (1 != fscanf(f_b, "%lg\n", &b[i]))
@@ -517,11 +509,11 @@ int main(int argc, char **argv)
 	}
 
 	/* solve Ax == b */
-	// !# Ajout des arguments de ses indices
+	// !# Ajout en arguments de son rang et du nombre de processeurs
 	cg_solve(A, b, x, THRESHOLD, scratch,my_rank, np);
 
 	// !# Seul le processeur 0 devra exécuter la suite :
-	if(my_rank == 0)
+	if(my_rank == MASTER)
 	{
 		/* Check result */
 		if (safety_check) {
@@ -546,4 +538,3 @@ int main(int argc, char **argv)
 	MPI_Finalize();
 	return EXIT_SUCCESS;
 }
-
