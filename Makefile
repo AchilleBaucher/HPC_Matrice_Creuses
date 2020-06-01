@@ -13,7 +13,7 @@ cg.o : cg.c mmio.h
 
 cg_fusion :
 	cp cg_fusion.c cg.c
-
+	export OMP_NUM_THREADS=4 #utilie pour openmp
 cg_omp :
 	cp cg_omp.c cg.c
 
